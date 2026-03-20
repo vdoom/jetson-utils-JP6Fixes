@@ -152,9 +152,28 @@ protected:
 	int     mRectIndex;
 
 	static const uint32_t MaxCommands = 1024;
-	static const uint32_t FirstGlyph  = 32;
-	static const uint32_t LastGlyph   = 255;
-	static const uint32_t NumGlyphs   = LastGlyph - FirstGlyph;
+
+	// Latin glyph range (Basic Latin + Latin-1 Supplement, codepoints 32-255)
+	static const uint32_t LatinFirst = 32;
+	static const uint32_t LatinCount = 224;
+
+	// Cyrillic glyph range (codepoints U+0400 - U+04FF)
+	static const uint32_t CyrillicFirst = 0x0400;
+	static const uint32_t CyrillicCount = 256;
+
+	static const uint32_t NumGlyphs = LatinCount + CyrillicCount;
+
+	/**
+	 * Map a Unicode codepoint to a glyph index, or -1 if unsupported.
+	 */
+	static inline int GlyphIndex( uint32_t codepoint )
+	{
+		if( codepoint >= LatinFirst && codepoint < LatinFirst + LatinCount )
+			return codepoint - LatinFirst;
+		if( codepoint >= CyrillicFirst && codepoint < CyrillicFirst + CyrillicCount )
+			return LatinCount + (codepoint - CyrillicFirst);
+		return -1;
+	}
 
 	struct GlyphInfo
 	{

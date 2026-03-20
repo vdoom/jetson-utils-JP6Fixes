@@ -31,11 +31,50 @@
 
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
-
-#include "../cpp/image/stb/stb_truetype.h"
+#include "../image/stb/stb_truetype.h"
 
 
 //#define DEBUG_FONT
+
+
+// Decode the next UTF-8 codepoint from str, advancing the pointer.
+// Returns 0 when the end of string is reached.
+static uint32_t nextUTF8( const char*& str )
+{
+	if( !*str )
+		return 0;
+
+	uint8_t c = (uint8_t)*str++;
+
+	if( c < 0x80 )
+		return c;
+
+	if( (c & 0xE0) == 0xC0 )
+	{
+		uint32_t cp = (c & 0x1F) << 6;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F);
+		return cp;
+	}
+
+	if( (c & 0xF0) == 0xE0 )
+	{
+		uint32_t cp = (c & 0x0F) << 12;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F) << 6;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F);
+		return cp;
+	}
+
+	if( (c & 0xF8) == 0xF0 )
+	{
+		uint32_t cp = (c & 0x07) << 18;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F) << 12;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F) << 6;
+		if( (*str & 0xC0) == 0x80 ) cp |= (*str++ & 0x3F);
+		return cp;
+	}
+
+	return 0xFFFD; // replacement character
+}
 
 
 // Struct for one character to render
@@ -87,8 +126,8 @@ cudaFont::cudaFont()
 	mRectsGPU   = NULL;
 	mRectIndex  = 0;
 
-	mFontMapWidth  = 256;
-	mFontMapHeight = 256;
+	mFontMapWidth  = 512;
+	mFontMapHeight = 512;
 }
 
 
@@ -224,8 +263,22 @@ bool cudaFont::init( const char* filename, float size )
 		return false;
 	}
 
-	// buffer that stores the coordinates of the baked glyphs
-	stbtt_bakedchar bakeCoords[NumGlyphs];
+	// buffers that store the coordinates of the baked glyphs
+	stbtt_packedchar latinCoords[LatinCount];
+	stbtt_packedchar cyrillicCoords[CyrillicCount];
+
+	// define the Unicode ranges to bake
+	stbtt_pack_range ranges[2] = {};
+
+	ranges[0].font_size = size;
+	ranges[0].first_unicode_codepoint_in_range = LatinFirst;
+	ranges[0].num_chars = LatinCount;
+	ranges[0].chardata_for_range = latinCoords;
+
+	ranges[1].font_size = size;
+	ranges[1].first_unicode_codepoint_in_range = CyrillicFirst;
+	ranges[1].num_chars = CyrillicCount;
+	ranges[1].chardata_for_range = cyrillicCoords;
 
 	// increase the size of the bitmap until all the glyphs fit
 	while(true)
@@ -240,74 +293,87 @@ bool cudaFont::init( const char* filename, float size )
 			return false;
 		}
 
-		// attempt to pack the bitmap
-		const int result = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer, 0, size, 
-										mFontMapCPU, mFontMapWidth, mFontMapHeight,
-									     FirstGlyph, NumGlyphs, bakeCoords);
+		// initialize packing context
+		stbtt_pack_context spc;
 
-		if( result == 0 )
+		if( !stbtt_PackBegin(&spc, mFontMapCPU, mFontMapWidth, mFontMapHeight, 0, 1, NULL) )
 		{
-			LogError(LOG_CUDA "failed to bake font bitmap '%s'\n", filename);
+			LogError(LOG_CUDA "failed to initialize font packing context\n");
 			free(ttf_buffer);
 			return false;
 		}
-		else if( result < 0 )
+
+		stbtt_PackSetSkipMissingCodepoints(&spc, 1);
+
+		// attempt to pack all glyph ranges
+		stbtt_PackFontRanges(&spc, (uint8_t*)ttf_buffer, 0, ranges, 2);
+		stbtt_PackEnd(&spc);
+
+		// stbtt_PackFontRanges returns 0 if any codepoint is missing from the
+		// font, even with skip_missing set.  Instead of trusting that return
+		// value, verify packing succeeded by checking a known glyph ('A').
+		const int testIdx = 'A' - LatinFirst;
+		if( latinCoords[testIdx].x1 > latinCoords[testIdx].x0 )
 		{
-			const int glyphsPacked = -result;
-
-			if( glyphsPacked == NumGlyphs )
-			{
-				LogVerbose(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
-				break;
-			}
-
-		#ifdef DEBUG_FONT
-			LogDebug(LOG_CUDA "fit only %i of %u font glyphs in %ux%u bitmap\n", glyphsPacked, NumGlyphs, mFontMapWidth, mFontMapHeight);
-		#endif
-
-			CUDA(cudaFreeHost(mFontMapCPU));
-		
-			mFontMapCPU = NULL; 
-			mFontMapGPU = NULL;
-
-			mFontMapWidth *= 2;
-			mFontMapHeight *= 2;
-
-		#ifdef DEBUG_FONT
-			LogDebug(LOG_CUDA "attempting to pack font with %ux%u bitmap...\n", mFontMapWidth, mFontMapHeight);
-		#endif
-			continue;
-		}
-		else
-		{
-		#ifdef DEBUG_FONT
-			LogDebug(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
-		#endif		
+			LogVerbose(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
 			break;
 		}
+
+	#ifdef DEBUG_FONT
+		LogDebug(LOG_CUDA "failed to fit all glyphs in %ux%u bitmap\n", mFontMapWidth, mFontMapHeight);
+	#endif
+
+		CUDA(cudaFreeHost(mFontMapCPU));
+
+		mFontMapCPU = NULL;
+		mFontMapGPU = NULL;
+
+		mFontMapWidth *= 2;
+		mFontMapHeight *= 2;
+
+		if( mFontMapWidth > 4096 )
+		{
+			LogError(LOG_CUDA "failed to pack font glyphs (atlas exceeded 4096x4096)\n");
+			free(ttf_buffer);
+			return false;
+		}
+
+	#ifdef DEBUG_FONT
+		LogDebug(LOG_CUDA "attempting to pack font with %ux%u bitmap...\n", mFontMapWidth, mFontMapHeight);
+	#endif
 	}
 
 	// free the TTF font data
 	free(ttf_buffer);
 
-	// store texture baking coordinates
-	for( uint32_t n=0; n < NumGlyphs; n++ )
+	// store glyph info from Latin range
+	for( uint32_t n=0; n < LatinCount; n++ )
 	{
-		mGlyphInfo[n].x = bakeCoords[n].x0;
-		mGlyphInfo[n].y = bakeCoords[n].y0;
+		mGlyphInfo[n].x = latinCoords[n].x0;
+		mGlyphInfo[n].y = latinCoords[n].y0;
 
-		mGlyphInfo[n].width  = bakeCoords[n].x1 - bakeCoords[n].x0;
-		mGlyphInfo[n].height = bakeCoords[n].y1 - bakeCoords[n].y0;
+		mGlyphInfo[n].width  = latinCoords[n].x1 - latinCoords[n].x0;
+		mGlyphInfo[n].height = latinCoords[n].y1 - latinCoords[n].y0;
 
-		mGlyphInfo[n].xAdvance = bakeCoords[n].xadvance;
-		mGlyphInfo[n].xOffset  = bakeCoords[n].xoff;
-		mGlyphInfo[n].yOffset  = bakeCoords[n].yoff;
+		mGlyphInfo[n].xAdvance = latinCoords[n].xadvance;
+		mGlyphInfo[n].xOffset  = latinCoords[n].xoff;
+		mGlyphInfo[n].yOffset  = latinCoords[n].yoff;
+	}
 
-	#ifdef DEBUG_FONT
-		// debug info
-		const char c = n + FirstGlyph;
-		LogDebug("Glyph %u: '%c' width=%hu height=%hu xOffset=%.0f yOffset=%.0f xAdvance=%0.1f\n", n, c, mGlyphInfo[n].width, mGlyphInfo[n].height, mGlyphInfo[n].xOffset, mGlyphInfo[n].yOffset, mGlyphInfo[n].xAdvance);
-	#endif	
+	// store glyph info from Cyrillic range
+	for( uint32_t n=0; n < CyrillicCount; n++ )
+	{
+		const uint32_t idx = LatinCount + n;
+
+		mGlyphInfo[idx].x = cyrillicCoords[n].x0;
+		mGlyphInfo[idx].y = cyrillicCoords[n].y0;
+
+		mGlyphInfo[idx].width  = cyrillicCoords[n].x1 - cyrillicCoords[n].x0;
+		mGlyphInfo[idx].height = cyrillicCoords[n].y1 - cyrillicCoords[n].y0;
+
+		mGlyphInfo[idx].xAdvance = cyrillicCoords[n].xadvance;
+		mGlyphInfo[idx].xOffset  = cyrillicCoords[n].xoff;
+		mGlyphInfo[idx].yOffset  = cyrillicCoords[n].yoff;
 	}
 
 	// allocate memory for GPU command buffer	
@@ -450,16 +516,16 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 		// determine the max 'height' of the string
 		int maxHeight = 0;
 
-		for( uint32_t n=0; n < numChars; n++ )
+		const char* p = strings[s].first.c_str();
+		while( *p )
 		{
-			char c = strings[s].first[n];
-			
-			if( c < FirstGlyph || c > LastGlyph )
-				continue;
-			
-			c -= FirstGlyph;
+			const uint32_t cp = nextUTF8(p);
+			const int gi = GlyphIndex(cp);
 
-			const int yOffset = abs((int)mGlyphInfo[c].yOffset);
+			if( gi < 0 )
+				continue;
+
+			const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
 
 			if( maxHeight < yOffset )
 				maxHeight = yOffset;
@@ -485,36 +551,36 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			mRectsCPU[mRectIndex] = make_float4(width, height, 0, 0);
 
 		// make a glyph command for each character
-		for( uint32_t n=0; n < numChars; n++ )
+		p = strings[s].first.c_str();
+		while( *p )
 		{
-			char c = strings[s].first[n];
-			
+			const uint32_t cp = nextUTF8(p);
+			const int gi = GlyphIndex(cp);
+
 			// make sure the character is in range
-			if( c < FirstGlyph || c > LastGlyph )
+			if( gi < 0 )
 				continue;
-			
-			c -= FirstGlyph;	// rebase char against glyph 0
-			
+
 			// fill the next command
 			GlyphCommand* cmd = ((GlyphCommand*)mCommandCPU) + mCmdIndex + numCommands;
 
 			cmd->x = pos.x;
-			cmd->y = pos.y + mGlyphInfo[c].yOffset;
-			cmd->u = mGlyphInfo[c].x;
-			cmd->v = mGlyphInfo[c].y;
+			cmd->y = pos.y + mGlyphInfo[gi].yOffset;
+			cmd->u = mGlyphInfo[gi].x;
+			cmd->v = mGlyphInfo[gi].y;
 
-			cmd->width  = mGlyphInfo[c].width;
-			cmd->height = mGlyphInfo[c].height;
-		
+			cmd->width  = mGlyphInfo[gi].width;
+			cmd->height = mGlyphInfo[gi].height;
+
 			// advance the text position
-			pos.x += mGlyphInfo[c].xAdvance;
+			pos.x += mGlyphInfo[gi].xAdvance;
 
 			// track the maximum glyph size
-			if( maxGlyphSize.x < mGlyphInfo[c].width )
-				maxGlyphSize.x = mGlyphInfo[c].width;
+			if( maxGlyphSize.x < mGlyphInfo[gi].width )
+				maxGlyphSize.x = mGlyphInfo[gi].width;
 
-			if( maxGlyphSize.y < mGlyphInfo[c].height )
-				maxGlyphSize.y = mGlyphInfo[c].height;
+			if( maxGlyphSize.y < mGlyphInfo[gi].height )
+				maxGlyphSize.y = mGlyphInfo[gi].height;
 
 			// expand the background rect
 			if( has_bg )
@@ -597,21 +663,19 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 	if( !str )
 		return make_int4(0,0,0,0);
 
-	const size_t numChars = strlen(str);
-
 	// determine the max 'height' of the string
 	int maxHeight = 0;
 
-	for( uint32_t n=0; n < numChars; n++ )
+	const char* p = str;
+	while( *p )
 	{
-		char c = str[n];
-		
-		if( c < FirstGlyph || c > LastGlyph )
-			continue;
-		
-		c -= FirstGlyph;
+		const uint32_t cp = nextUTF8(p);
+		const int gi = GlyphIndex(cp);
 
-		const int yOffset = abs((int)mGlyphInfo[c].yOffset);
+		if( gi < 0 )
+			continue;
+
+		const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
 
 		if( maxHeight < yOffset )
 			maxHeight = yOffset;
@@ -625,23 +689,23 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 
 	if( pos.y < 0 )
 		pos.y = 0;
-	
+
 	pos.y += maxHeight;
 
 
 	// find the extents of the string
-	for( uint32_t n=0; n < numChars; n++ )
+	p = str;
+	while( *p )
 	{
-		char c = str[n];
-		
+		const uint32_t cp = nextUTF8(p);
+		const int gi = GlyphIndex(cp);
+
 		// make sure the character is in range
-		if( c < FirstGlyph || c > LastGlyph )
+		if( gi < 0 )
 			continue;
-		
-		c -= FirstGlyph;	// rebase char against glyph 0
-		
+
 		// advance the text position
-		pos.x += mGlyphInfo[c].xAdvance;
+		pos.x += mGlyphInfo[gi].xAdvance;
 	}
 
 	return make_int4(x, y, pos.x, pos.y);
