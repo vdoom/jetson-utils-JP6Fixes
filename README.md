@@ -23,9 +23,9 @@ C++/CUDA/Python multimedia utilities for NVIDIA Jetson:
 
 Documentation for jetson-utils can be found here:
 
-* [API Reference](https://github.com/dusty-nv/jetson-inference#api-reference)
-* [Camera Streaming and Multimedia](https://github.com/dusty-nv/jetson-inference/blob/master/docs/aux-streaming.md)
-* [Image Manipulation with CUDA](https://github.com/dusty-nv/jetson-inference/blob/master/docs/aux-image.md)
+* [API Reference](https://github.com/vdoom/jetson-inference-jp6fixes#api-reference)
+* [Camera Streaming and Multimedia](https://github.com/vdoom/jetson-inference-jp6fixes/blob/master/docs/aux-streaming.md)
+* [Image Manipulation with CUDA](https://github.com/vdoom/jetson-inference-jp6fixes/blob/master/docs/aux-image.md)
 
 Assorted links and tips-and-tricks for Linux are kept under [`docs/`](docs/)
 
@@ -44,7 +44,7 @@ sudo make install
 sudo ldconfig
 ```
 
-If you're missing dependencies, run the [`jetson-inference/CMakePreBuild.sh`](https://github.com/dusty-nv/jetson-inference/blob/master/CMakePreBuild.sh) script.
+If you're missing dependencies, run the [`jetson-inference/CMakePreBuild.sh`](https://github.com/vdoom/jetson-inference-jp6fixes/blob/master/CMakePreBuild.sh) script.
 
 ### Install with Pip (Python only)
 
