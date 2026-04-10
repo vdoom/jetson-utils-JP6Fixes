@@ -128,6 +128,8 @@ cudaFont::cudaFont()
 
 	mFontMapWidth  = 512;
 	mFontMapHeight = 512;
+
+	mMaxGlyphHeight = 0;
 }
 
 
@@ -376,7 +378,16 @@ bool cudaFont::init( const char* filename, float size )
 		mGlyphInfo[idx].yOffset  = cyrillicCoords[n].yoff;
 	}
 
-	// allocate memory for GPU command buffer	
+	// compute uniform glyph cell height
+	mMaxGlyphHeight = 0;
+	for( uint32_t i = 0; i < NumGlyphs; i++ )
+	{
+		const int h = abs((int)mGlyphInfo[i].yOffset);
+		if( h > mMaxGlyphHeight )
+			mMaxGlyphHeight = h;
+	}
+
+	// allocate memory for GPU command buffer
 	if( !cudaAllocMapped(&mCommandCPU, &mCommandGPU, sizeof(GlyphCommand) * MaxCommands) )
 		return false;
 	
@@ -513,23 +524,8 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 		if( numChars == 0 )
 			continue;
 
-		// determine the max 'height' of the string
-		int maxHeight = 0;
-
-		const char* p = strings[s].first.c_str();
-		while( *p )
-		{
-			const uint32_t cp = nextUTF8(p);
-			const int gi = GlyphIndex(cp);
-
-			if( gi < 0 )
-				continue;
-
-			const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
-
-			if( maxHeight < yOffset )
-				maxHeight = yOffset;
-		}
+		// use precomputed uniform glyph cell height
+		const int maxHeight = mMaxGlyphHeight;
 
 	#ifdef DEBUG_FONT
 		LogDebug(LOG_CUDA "max glyph height:  %i\n", maxHeight);
@@ -551,7 +547,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			mRectsCPU[mRectIndex] = make_float4(width, height, 0, 0);
 
 		// make a glyph command for each character
-		p = strings[s].first.c_str();
+		const char* p = strings[s].first.c_str();
 		while( *p )
 		{
 			const uint32_t cp = nextUTF8(p);
@@ -663,23 +659,8 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 	if( !str )
 		return make_int4(0,0,0,0);
 
-	// determine the max 'height' of the string
-	int maxHeight = 0;
-
-	const char* p = str;
-	while( *p )
-	{
-		const uint32_t cp = nextUTF8(p);
-		const int gi = GlyphIndex(cp);
-
-		if( gi < 0 )
-			continue;
-
-		const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
-
-		if( maxHeight < yOffset )
-			maxHeight = yOffset;
-	}
+	// use precomputed uniform glyph cell height
+	const int maxHeight = mMaxGlyphHeight;
 
 	// get the starting position of the string
 	int2 pos = make_int2(x,y);
@@ -694,7 +675,7 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 
 
 	// find the extents of the string
-	p = str;
+	const char* p = str;
 	while( *p )
 	{
 		const uint32_t cp = nextUTF8(p);

@@ -151,6 +151,8 @@ protected:
 	float4* mRectsGPU;
 	int     mRectIndex;
 
+	int mMaxGlyphHeight;  // uniform glyph cell height (max abs(yOffset) across all glyphs)
+
 	static const uint32_t MaxCommands = 1024;
 
 	// Latin glyph range (Basic Latin + Latin-1 Supplement, codepoints 32-255)
