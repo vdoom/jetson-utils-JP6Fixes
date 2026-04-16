@@ -1,3 +1,7 @@
 from .requests import *
 from .github import *
-from .docker import *
+
+try:
+    from .docker import *
+except ImportError:
+    pass
