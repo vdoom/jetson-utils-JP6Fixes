@@ -40,4 +40,4 @@ def cudaToTorch(ptr, shape, dtype):
     return torch.as_tensor(cudaArrayInterface(ptr, shape, dtype), device='cuda')
     
 
-__all__ = ['cudaArrayInterface', 'cudaToNumpy', 'cudaToTorch']
+__all__ = ['cudaArrayInterface', 'cudaToTorch']
