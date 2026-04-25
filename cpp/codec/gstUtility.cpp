@@ -85,7 +85,7 @@ const char* gst_format_to_string( imageFormat format )
 		case IMAGE_BAYER_GBRG:	return "gbrg";
 		case IMAGE_BAYER_GRBG:	return "grbg";
 		case IMAGE_BAYER_RGGB:	return "rggb";
-		case IMAGE_GRAY8:	return "gray8";
+		case IMAGE_GRAY8:	return "GRAY8";
 	}
 	
 	return " ";
