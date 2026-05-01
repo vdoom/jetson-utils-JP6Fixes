@@ -136,7 +136,10 @@ protected:
 	bool init( const char* font, float size );
 		
 	float mSize;
-		
+
+	float mMaxAscent;   // max |yOffset| across all baked glyphs (pixels above baseline)
+	float mMaxDescent;  // max (yOffset + height) across all baked glyphs (pixels below baseline)
+
 	uint8_t* mFontMapCPU;
 	uint8_t* mFontMapGPU;
 	

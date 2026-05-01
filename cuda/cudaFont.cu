@@ -128,6 +128,9 @@ cudaFont::cudaFont()
 
 	mFontMapWidth  = 512;
 	mFontMapHeight = 512;
+
+	mMaxAscent  = 0.0f;
+	mMaxDescent = 0.0f;
 }
 
 
@@ -376,7 +379,20 @@ bool cudaFont::init( const char* filename, float size )
 		mGlyphInfo[idx].yOffset  = cyrillicCoords[n].yoff;
 	}
 
-	// allocate memory for GPU command buffer	
+	// compute global font metrics from baked glyphs (used for constant bg row height)
+	for( uint32_t n=0; n < NumGlyphs; n++ )
+	{
+		if( mGlyphInfo[n].width == 0 || mGlyphInfo[n].height == 0 )
+			continue;
+
+		const float ascent  = -mGlyphInfo[n].yOffset;
+		const float descent =  mGlyphInfo[n].yOffset + mGlyphInfo[n].height;
+
+		if( ascent  > mMaxAscent  ) mMaxAscent  = ascent;
+		if( descent > mMaxDescent ) mMaxDescent = descent;
+	}
+
+	// allocate memory for GPU command buffer
 	if( !cudaAllocMapped(&mCommandCPU, &mCommandGPU, sizeof(GlyphCommand) * MaxCommands) )
 		return false;
 	
@@ -509,31 +525,9 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 	for( uint32_t s=0; s < numStrings; s++ )
 	{
 		const uint32_t numChars = strings[s].first.size();
-		
+
 		if( numChars == 0 )
 			continue;
-
-		// determine the max 'height' of the string
-		int maxHeight = 0;
-
-		const char* p = strings[s].first.c_str();
-		while( *p )
-		{
-			const uint32_t cp = nextUTF8(p);
-			const int gi = GlyphIndex(cp);
-
-			if( gi < 0 )
-				continue;
-
-			const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
-
-			if( maxHeight < yOffset )
-				maxHeight = yOffset;
-		}
-
-	#ifdef DEBUG_FONT
-		LogDebug(LOG_CUDA "max glyph height:  %i\n", maxHeight);
-	#endif
 
 		// get the starting position of the string
 		int2 pos = strings[s].second;
@@ -543,15 +537,19 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 
 		if( pos.y < 0 )
 			pos.y = 0;
-		
-		pos.y += maxHeight;
 
-		// reset the background rect if needed
+		// place baseline using global font ascender so it is identical across strings
+		pos.y += (int)mMaxAscent;
+
+		// reset the background rect if needed; y extents are constant across strings
 		if( has_bg )
-			mRectsCPU[mRectIndex] = make_float4(width, height, 0, 0);
+			mRectsCPU[mRectIndex] = make_float4((float)width,
+			                                    (float)pos.y - mMaxAscent,
+			                                    0.0f,
+			                                    (float)pos.y + mMaxDescent);
 
 		// make a glyph command for each character
-		p = strings[s].first.c_str();
+		const char* p = strings[s].first.c_str();
 		while( *p )
 		{
 			const uint32_t cp = nextUTF8(p);
@@ -582,7 +580,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			if( maxGlyphSize.y < mGlyphInfo[gi].height )
 				maxGlyphSize.y = mGlyphInfo[gi].height;
 
-			// expand the background rect
+			// expand the background rect along x only — y extents are fixed by global font metrics
 			if( has_bg )
 			{
 				float4* rect = mRectsCPU + mRectIndex + numRects;
@@ -590,17 +588,10 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 				if( cmd->x < rect->x )
 					rect->x = cmd->x;
 
-				if( cmd->y < rect->y )
-					rect->y = cmd->y;
-
 				const float x2 = cmd->x + cmd->width;
-				const float y2 = cmd->y + cmd->height;
 
 				if( x2 > rect->z )
 					rect->z = x2;
-
-				if( y2 > rect->w )
-					rect->w = y2;
 			}
 
 			numCommands++;
@@ -663,24 +654,6 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 	if( !str )
 		return make_int4(0,0,0,0);
 
-	// determine the max 'height' of the string
-	int maxHeight = 0;
-
-	const char* p = str;
-	while( *p )
-	{
-		const uint32_t cp = nextUTF8(p);
-		const int gi = GlyphIndex(cp);
-
-		if( gi < 0 )
-			continue;
-
-		const int yOffset = abs((int)mGlyphInfo[gi].yOffset);
-
-		if( maxHeight < yOffset )
-			maxHeight = yOffset;
-	}
-
 	// get the starting position of the string
 	int2 pos = make_int2(x,y);
 
@@ -690,11 +663,11 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 	if( pos.y < 0 )
 		pos.y = 0;
 
-	pos.y += maxHeight;
-
+	// place baseline using global font ascender (matches OverlayText)
+	pos.y += (int)mMaxAscent;
 
 	// find the extents of the string
-	p = str;
+	const char* p = str;
 	while( *p )
 	{
 		const uint32_t cp = nextUTF8(p);
@@ -708,7 +681,8 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 		pos.x += mGlyphInfo[gi].xAdvance;
 	}
 
-	return make_int4(x, y, pos.x, pos.y);
+	// include the descender so the bbox matches the rendered bg rect
+	return make_int4(x, y, pos.x, pos.y + (int)mMaxDescent);
 }
 	
 
