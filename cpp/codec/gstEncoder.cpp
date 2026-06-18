@@ -308,7 +308,7 @@ bool gstEncoder::buildCapsStr()
 bool gstEncoder::buildLaunchStr()
 {
 	std::ostringstream ss;
-	ss << "appsrc name=mysource is-live=true do-timestamp=true format=3 ! ";  // setup appsrc input element
+	ss << "appsrc name=mysource is-live=true do-timestamp=true format=3 max-bytes=0 max-buffers=4 leaky-type=2 ! ";  // setup appsrc input element
 	
 	const URI& uri = GetResource();
 	std::string encoderOptions = "";
@@ -344,7 +344,7 @@ bool gstEncoder::buildLaunchStr()
 			ss << "speed-preset=ultrafast tune=zerolatency ";
 			
 			if( mOptions.deviceType == videoOptions::DEVICE_IP )
-				ss << "key-int-max=30 insert-vui=1 ";			// send keyframes/I-frames more frequently for network streams
+				ss << "key-int-max=15 insert-vui=1 intra-refresh=true ";			// send keyframes/I-frames more frequently for network streams
 		}
 		else if( mOptions.codec == videoOptions::CODEC_VP8 || mOptions.codec == videoOptions::CODEC_VP9 )
 		{
@@ -514,14 +514,14 @@ bool gstEncoder::encodeYUV( void* buffer, size_t size )
 	// check to see if data can be accepted
 	// 20240307 - disabled for WebRTC which can get stuck in 'pipeline full' state;
 	// re-enabled for non-WebRTC pipelines so the appsrc queue doesn't grow unbounded under saturation
-	if( !mNeedData && mWebRTCServer == NULL )
+/*	if( !mNeedData && mWebRTCServer == NULL )
 	{
 		if( mOptions.frameCount % 25 == 0 )
 			LogVerbose(LOG_GSTREAMER "gstEncoder -- pipeline full, skipping frame %zu (%ux%u, %zu bytes)\n", mOptions.frameCount, mOptions.width, mOptions.height, size);
 
 		return true;
 	}
-
+*/
 	// construct the buffer caps for this size image
 	if( !mBufferCaps )
 	{
