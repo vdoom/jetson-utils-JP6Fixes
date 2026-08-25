@@ -23,6 +23,7 @@
 #ifndef __FILESYSTEM_UTIL_H__
 #define __FILESYSTEM_UTIL_H__
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

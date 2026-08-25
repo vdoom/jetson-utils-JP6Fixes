@@ -23,6 +23,7 @@
 #ifndef __NETWORKING_H_
 #define __NETWORKING_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

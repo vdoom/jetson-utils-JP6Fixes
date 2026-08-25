@@ -1,5 +1,5 @@
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
 # determine if jetson-utils is being built as a submodule inside another repo,
 # or if it's being build standalone (if the later, we need to do some configuration)
@@ -13,8 +13,7 @@ else()
 	# standalone project
 	project(jetson-utils)
   
-	# -std=gnu++11
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wno-write-strings")	
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wno-write-strings")	# CUDA 13 requires C++17
   
 	# setup CUDA
 	set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cuda")
@@ -23,19 +22,52 @@ else()
 
 	set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -O3)
 
+	# select which GPU architectures to generate device code for:
+	#
+	#   SM_53 = Nano/TX1     SM_62 = TX2      SM_72 = Xavier
+	#   SM_87 = Orin         SM_110 = Thor    SM_121 = Spark (GB10)
+	#
+	# CUDA 13 (JetPack 7) removed Maxwell/Pascal/Volta and added Thor/GB10, and
+	# passing nvcc an architecture it doesn't know is a fatal error - so ask nvcc
+	# what it actually supports instead of mapping it from the CUDA version.
+	set(CUDA_JETSON_ARCHS "53;62;72;87;110;121" CACHE STRING "GPU architectures (SM versions) to generate code for on aarch64")
+
 	if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-		message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_53 SM_62")
-		set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_53,code=sm_53 -gencode arch=compute_62,code=sm_62)
+		execute_process(COMMAND ${CUDA_NVCC_EXECUTABLE} --list-gpu-arch
+					 OUTPUT_VARIABLE NVCC_SUPPORTED_ARCHS
+					 ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-		if(CUDA_VERSION_MAJOR GREATER 9)
-			message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_72")
-			set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_72,code=sm_72)
+		string(REPLACE "\n" ";" NVCC_SUPPORTED_ARCHS "${NVCC_SUPPORTED_ARCHS}")
+
+		if(NOT NVCC_SUPPORTED_ARCHS)
+			# nvcc predates --list-gpu-arch (CUDA < 11), fall back to the version table
+			set(NVCC_SUPPORTED_ARCHS "compute_53;compute_62")
+
+			if(CUDA_VERSION_MAJOR GREATER 9)
+				list(APPEND NVCC_SUPPORTED_ARCHS "compute_72")
+			endif()
+
+			if(CUDA_VERSION_MAJOR GREATER 10)
+				list(APPEND NVCC_SUPPORTED_ARCHS "compute_87")
+			endif()
 		endif()
 
-		if(CUDA_VERSION_MAJOR GREATER 10)
-			message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_87")
-			set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_87,code=sm_87)
+		set(CUDA_ENABLED_ARCHS "")
+
+		foreach(SM ${CUDA_JETSON_ARCHS})
+			list(FIND NVCC_SUPPORTED_ARCHS "compute_${SM}" SM_FOUND)
+
+			if(NOT SM_FOUND EQUAL -1)
+				set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_${SM},code=sm_${SM})
+				set(CUDA_ENABLED_ARCHS "${CUDA_ENABLED_ARCHS} SM_${SM}")
+			endif()
+		endforeach()
+
+		if(NOT CUDA_ENABLED_ARCHS)
+			message(FATAL_ERROR "CUDA ${CUDA_VERSION} doesn't support any of the requested GPU architectures (${CUDA_JETSON_ARCHS})")
 		endif()
+
+		message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling${CUDA_ENABLED_ARCHS}")
 	endif()
 	
 	# setup project output paths

@@ -27,6 +27,39 @@
 #include <nppi.h>
 
 
+// CUDA 13 (JetPack 7) removed NPP's global state functions, including
+// nppGetStreamContext() - the stream context is now filled in by the
+// application.  The device-dependent fields are the same on every CUDA
+// version, so query them once here and reuse them for each call.
+static const NppStreamContext& nppDeviceContext()
+{
+	static NppStreamContext context = []() -> NppStreamContext
+	{
+		NppStreamContext ctx = {};
+		cudaDeviceProp prop;
+		int device = 0;
+
+		if( CUDA_FAILED(cudaGetDevice(&device)) || CUDA_FAILED(cudaGetDeviceProperties(&prop, device)) )
+		{
+			LogError(LOG_CUDA "cudaBayer -- failed to query the CUDA device properties for NPP\n");
+			return ctx;
+		}
+
+		ctx.nCudaDeviceId                      = device;
+		ctx.nMultiProcessorCount               = prop.multiProcessorCount;
+		ctx.nMaxThreadsPerMultiProcessor       = prop.maxThreadsPerMultiProcessor;
+		ctx.nMaxThreadsPerBlock                = prop.maxThreadsPerBlock;
+		ctx.nSharedMemPerBlock                 = prop.sharedMemPerBlock;
+		ctx.nCudaDevAttrComputeCapabilityMajor = prop.major;
+		ctx.nCudaDevAttrComputeCapabilityMinor = prop.minor;
+
+		return ctx;
+	}();
+
+	return context;
+}
+
+
 // cudaBayerToRGB
 cudaError_t cudaBayerToRGB( uint8_t* input, uchar3* output, size_t width, size_t height, imageFormat format, cudaStream_t stream )
 {
@@ -53,9 +86,11 @@ cudaError_t cudaBayerToRGB( uint8_t* input, uchar3* output, size_t width, size_t
 	else
 		return cudaErrorInvalidValue;
 	
-	NppStreamContext nppStreamContext;
-	nppGetStreamContext(&nppStreamContext);
+	NppStreamContext nppStreamContext = nppDeviceContext();
 	nppStreamContext.hStream = stream;
+
+	if( cudaStreamGetFlags(stream, &nppStreamContext.nStreamFlags) != cudaSuccess )
+		nppStreamContext.nStreamFlags = 0;
 	
 	const NppStatus result = nppiCFAToRGB_8u_C1C3R_Ctx(input, width * sizeof(uint8_t), size, roi, 
 												       (uint8_t*)output, width * sizeof(uchar3),

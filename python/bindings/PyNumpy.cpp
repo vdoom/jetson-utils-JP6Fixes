@@ -306,10 +306,14 @@ PyMethodDef* PyNumpy_RegisterFunctions()
 }
 
 // Initialize NumPy
-PyMODINIT_FUNC PyNumpy_ImportNumpy()
+// import_array() expands to `return NULL;` when the import fails, so this has
+// to return a pointer type - falling off the end of it is undefined behavior
+// that newer compilers (GCC 13 / JetPack 7) turn into a trap instruction.
+static void* PyNumpy_ImportNumpy()
 {
 	import_array();
 	//import_ufunc();	// only needed if using ufunctions
+	return (void*)PyNumpy_ImportNumpy;
 }
 
 // Register types
@@ -318,7 +322,12 @@ bool PyNumpy_RegisterTypes( PyObject* module )
 	if( !module )
 		return false;
 	
-	PyNumpy_ImportNumpy();
+	if( !PyNumpy_ImportNumpy() )
+	{
+		LogError(LOG_PY_UTILS "failed to import NumPy (numpy.core.multiarray)\n");
+		return false;
+	}
+	
 	return true;
 }
 
