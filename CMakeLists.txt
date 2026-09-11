@@ -23,18 +23,46 @@ else()
 
 	set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -O3)
 
+# Jetson SM architectures:  53=Nano/TX1, 62=TX2, 72=Xavier, 87=Orin, 110=Thor
+# newer CUDA toolkits drop support for older SM's (CUDA 13 / JetPack 7 removed
+# 53/62/72), so the list gets filtered against what the installed nvcc actually
+# accepts - that keeps JetPack 4/5/6 generating the same code as before, while
+# letting JetPack 7 build for the architectures that are still supported.
+	set(CUDA_ARCH_LIST "53;62;72;87;110" CACHE STRING "CUDA architectures (SM versions) to generate code for")
+
 	if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-		message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_53 SM_62")
-		set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_53,code=sm_53 -gencode arch=compute_62,code=sm_62)
+		execute_process(COMMAND ${CUDA_NVCC_EXECUTABLE} --list-gpu-arch
+					OUTPUT_VARIABLE NVCC_ARCH_OUTPUT
+					RESULT_VARIABLE NVCC_ARCH_RESULT
+					ERROR_QUIET)
 
-		if(CUDA_VERSION_MAJOR GREATER 9)
-			message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_72")
-			set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_72,code=sm_72)
-		endif()
+		string(REPLACE "\n" ";" NVCC_ARCH_SUPPORTED "${NVCC_ARCH_OUTPUT}")
+		set(CUDA_ARCH_ENABLED "")
 
-		if(CUDA_VERSION_MAJOR GREATER 10)
-			message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling SM_87")
-			set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_87,code=sm_87)
+		foreach(SM ${CUDA_ARCH_LIST})
+			if(NVCC_ARCH_RESULT EQUAL 0)
+				# nvcc reports the architectures that it supports (CUDA 11.0 and newer)
+				list(FIND NVCC_ARCH_SUPPORTED "compute_${SM}" SM_INDEX)
+			else()
+				# --list-gpu-arch is unavailable (CUDA 10 and older), fall back to version checks
+				set(SM_INDEX -1)
+
+				if(SM LESS 72 OR (SM EQUAL 72 AND CUDA_VERSION_MAJOR GREATER 9))
+					set(SM_INDEX 0)
+				endif()
+			endif()
+
+			if(NOT SM_INDEX EQUAL -1)
+				set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}; -gencode arch=compute_${SM},code=sm_${SM})
+				list(APPEND CUDA_ARCH_ENABLED SM_${SM})
+			endif()
+		endforeach()
+
+		if(CUDA_ARCH_ENABLED)
+			string(REPLACE ";" " " CUDA_ARCH_ENABLED "${CUDA_ARCH_ENABLED}")
+			message("-- CUDA ${CUDA_VERSION} detected (${CMAKE_SYSTEM_PROCESSOR}), enabling ${CUDA_ARCH_ENABLED}")
+		else()
+			message(WARNING "CUDA ${CUDA_VERSION} doesn't support any of the SM architectures in CUDA_ARCH_LIST (${CUDA_ARCH_LIST}), falling back to the nvcc defaults")
 		endif()
 	endif()
 	

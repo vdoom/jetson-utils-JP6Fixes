@@ -25,6 +25,7 @@
 
 
 #include <endian.h>
+#include <cstdint>
 
 
 /*

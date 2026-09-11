@@ -26,6 +26,44 @@
 #include <npp.h>
 #include <nppi.h>
 
+#include <string.h>
+
+
+// NPP dropped the nppGetStreamContext() helper in CUDA 13 (JetPack 7) - the
+// application is expected to fill in NppStreamContext itself now.  Doing it by
+// hand works on every NPP that has the struct (CUDA 10.1 and newer), so there's
+// no need to branch on the toolkit version here.
+static cudaError_t nppInitStreamContext( NppStreamContext* ctx, cudaStream_t stream )
+{
+	int device = 0;
+	int sharedMemPerBlock = 0;
+	
+	memset(ctx, 0, sizeof(NppStreamContext));
+	
+	if( CUDA_FAILED(cudaGetDevice(&device)) )
+		return cudaErrorInvalidDevice;
+	
+	if( CUDA_FAILED(cudaDeviceGetAttribute(&ctx->nMultiProcessorCount, cudaDevAttrMultiProcessorCount, device)) ||
+	    CUDA_FAILED(cudaDeviceGetAttribute(&ctx->nMaxThreadsPerMultiProcessor, cudaDevAttrMaxThreadsPerMultiProcessor, device)) ||
+	    CUDA_FAILED(cudaDeviceGetAttribute(&ctx->nMaxThreadsPerBlock, cudaDevAttrMaxThreadsPerBlock, device)) ||
+	    CUDA_FAILED(cudaDeviceGetAttribute(&ctx->nCudaDevAttrComputeCapabilityMajor, cudaDevAttrComputeCapabilityMajor, device)) ||
+	    CUDA_FAILED(cudaDeviceGetAttribute(&ctx->nCudaDevAttrComputeCapabilityMinor, cudaDevAttrComputeCapabilityMinor, device)) ||
+	    CUDA_FAILED(cudaDeviceGetAttribute(&sharedMemPerBlock, cudaDevAttrMaxSharedMemoryPerBlock, device)) )
+	{
+		return cudaErrorInvalidValue;
+	}
+	
+	ctx->hStream = stream;
+	ctx->nCudaDeviceId = device;
+	ctx->nSharedMemPerBlock = sharedMemPerBlock;
+	
+	// the legacy default stream doesn't always accept cudaStreamGetFlags()
+	if( cudaStreamGetFlags(stream, &ctx->nStreamFlags) != cudaSuccess )
+		ctx->nStreamFlags = cudaStreamDefault;
+	
+	return cudaSuccess;
+}
+
 
 // cudaBayerToRGB
 cudaError_t cudaBayerToRGB( uint8_t* input, uchar3* output, size_t width, size_t height, imageFormat format, cudaStream_t stream )
@@ -54,8 +92,9 @@ cudaError_t cudaBayerToRGB( uint8_t* input, uchar3* output, size_t width, size_t
 		return cudaErrorInvalidValue;
 	
 	NppStreamContext nppStreamContext;
-	nppGetStreamContext(&nppStreamContext);
-	nppStreamContext.hStream = stream;
+	
+	if( nppInitStreamContext(&nppStreamContext, stream) != cudaSuccess )
+		return cudaErrorInvalidValue;
 	
 	const NppStatus result = nppiCFAToRGB_8u_C1C3R_Ctx(input, width * sizeof(uint8_t), size, roi, 
 												       (uint8_t*)output, width * sizeof(uchar3),

@@ -306,10 +306,21 @@ PyMethodDef* PyNumpy_RegisterFunctions()
 }
 
 // Initialize NumPy
-PyMODINIT_FUNC PyNumpy_ImportNumpy()
+static bool PyNumpy_ImportNumpy()
 {
-	import_array();
+	// import_array() expands to `return NULL` on failure, so it can't be used from
+	// a function that returns anything else - call the underlying _import_array()
+	// directly instead, otherwise the success path runs off the end of the function
+	// (which GCC 13 and newer turn into a trap instruction)
+	if( _import_array() < 0 )
+	{
+		PyErr_Print();
+		PyErr_SetString(PyExc_ImportError, LOG_PY_UTILS "numpy.core.multiarray failed to import");
+		return false;
+	}
+	
 	//import_ufunc();	// only needed if using ufunctions
+	return true;
 }
 
 // Register types
@@ -318,8 +329,7 @@ bool PyNumpy_RegisterTypes( PyObject* module )
 	if( !module )
 		return false;
 	
-	PyNumpy_ImportNumpy();
-	return true;
+	return PyNumpy_ImportNumpy();
 }
 
 #else

@@ -24,6 +24,7 @@
 #define __FILESYSTEM_UTIL_H__
 
 #include <string>
+#include <cstdint>
 #include <vector>
 
 

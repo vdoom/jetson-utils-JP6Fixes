@@ -24,6 +24,7 @@
 #define __NETWORKING_H_
 
 #include <string>
+#include <cstdint>
 #include <vector>
 
 #include "IPv4.h"
