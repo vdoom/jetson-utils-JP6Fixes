@@ -36,10 +36,12 @@
 #include <gst/webrtc/webrtc.h>
 #include <gst/app/gstappsrc.h>
 
+#include <fstream>
 #include <sstream>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <glob.h>
 
 
 // supported video file extensions
@@ -304,6 +306,49 @@ bool gstEncoder::buildCapsStr()
 	
 	
 
+// checkEncoderClock
+static void checkEncoderClock()
+{
+#if defined(__aarch64__)
+	// maxperf-enable used to pin the encoder clock, but it's a no-op since JetPack 7 (L4T R39) and the
+	// devfreq governor then leaves NVENC at its minimum clock (115 MHz on Orin, ~11ms per 720p frame
+	// instead of ~4ms).  Only root can change that, so point it out instead of failing silently.
+	static bool checked = false;
+
+	if( checked )
+		return;
+
+	checked = true;
+
+	glob_t devices;
+
+	if( glob("/sys/class/devfreq/*.nvenc*", 0, NULL, &devices) != 0 )
+		return;
+
+	for( size_t n=0; n < devices.gl_pathc; n++ )
+	{
+		const std::string path = devices.gl_pathv[n];
+
+		std::string governor;
+		uint64_t minFreq = 0;
+		uint64_t maxFreq = 0;
+
+		std::ifstream(path + "/governor") >> governor;
+		std::ifstream(path + "/min_freq") >> minFreq;
+		std::ifstream(path + "/max_freq") >> maxFreq;
+
+		if( governor.length() == 0 || governor == "performance" || minFreq >= maxFreq )
+			continue;
+
+		LogWarning(LOG_GSTREAMER "gstEncoder -- %s is using the '%s' governor (min %lu MHz, max %lu MHz), the encoder may run at its minimum clock\n", path.c_str(), governor.c_str(), minFreq / 1000000, maxFreq / 1000000);
+		LogWarning(LOG_GSTREAMER "gstEncoder -- for lower latency, run:  echo performance | sudo tee %s/governor\n", path.c_str());
+	}
+
+	globfree(&devices);
+#endif
+}
+
+
 // buildLaunchStr
 bool gstEncoder::buildLaunchStr()
 {
@@ -361,13 +406,29 @@ bool gstEncoder::buildLaunchStr()
 		if( mOptions.deviceType == videoOptions::DEVICE_IP )
 		{
 			if( mOptions.codecType == videoOptions::CODEC_V4L2 )
+			{
 				ss << "insert-sps-pps=1 insert-vui=1 idrinterval=30 ";
+
+				// the default VBV is 4 Mbit regardless of bitrate, which lets the rate control put most of
+				// a second's bit budget into every IDR (JetPack 7 / L4T R39 makes ~280KB IDRs at 3.5 Mbps,
+				// ~75x a P-frame) - that burst shows up as a hitch once per IDR and gets packets dropped.
+				// Capping the VBV to a few frames keeps every frame close to the average size, and two-pass
+				// CBR spends those bits better at the cost of ~1ms of encoder latency.
+				if( mOptions.codec == videoOptions::CODEC_H264 || mOptions.codec == videoOptions::CODEC_H265 )
+				{
+					const uint64_t vbvSize = (uint64_t)(mOptions.bitRate * 3.0 / mOptions.frameRate);
+					ss << "vbv-size=" << vbvSize << " EnableTwopassCBR=true ";
+				}
+			}
 			else if( mOptions.codecType == videoOptions::CODEC_OMX )
 				ss << "insert-sps-pps=1 insert-vui=1 ";
 		}
 		
 		if( mOptions.codecType == videoOptions::CODEC_V4L2 )
+		{
 			ss << "maxperf-enable=1 ";
+			checkEncoderClock();
+		}
 	}
 
 	if( mOptions.codec == videoOptions::CODEC_H264 )
