@@ -538,8 +538,8 @@ bool gstDecoder::buildLaunchStr()
 		parser = "h264parse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_H265 )
 		parser = "h265parse ! ";
-	else if( mOptions.codec == videoOptions::CODEC_AV1 && gst_element_exists("av1parse") )
-		parser = "av1parse ! ";	// requires GStreamer 1.20
+	else if( mOptions.codec == videoOptions::CODEC_AV1 && mOptions.codecType != videoOptions::CODEC_V4L2 && gst_element_exists("av1parse") )
+		parser = "av1parse ! ";	// requires GStreamer 1.20 (nvv4l2decoder gets the demuxed/depayloaded stream directly)
 	else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 		parser = "mpegvideoparse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_MPEG4 )

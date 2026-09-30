@@ -518,6 +518,40 @@ static const char* gst_select_av1_encoder()
 }
 
 
+// check if the hardware codecs support AV1 (Orin and newer)
+static bool gst_query_hw_av1()
+{
+#if defined(__aarch64__)
+	if( fileExists("/proc/device-tree/compatible") )
+	{
+		const std::string soc = readFile("/proc/device-tree/compatible");
+
+		if( soc.length() == 0 )
+			return false;
+
+		// Nano/TX1 (tegra210), TX2 (tegra186), and Xavier (tegra194) don't have AV1 in NVENC/NVDEC
+		if( soc.find("nvidia,tegra210") != std::string::npos ||
+		    soc.find("nvidia,tegra186") != std::string::npos ||
+		    soc.find("nvidia,tegra194") != std::string::npos )
+			return false;
+
+		return true;
+	}
+
+	// the device tree is masked inside containers, where only the board model gets mounted
+	if( !fileExists("/tmp/nv_jetson_model") )
+		return false;
+
+	std::string board = readFile("/tmp/nv_jetson_model");
+	std::transform(board.begin(), board.end(), board.begin(), [](unsigned char c){ return std::tolower(c); });
+
+	return board.find("orin") != std::string::npos || board.find("thor") != std::string::npos;
+#else
+	return false;
+#endif
+}
+
+
 // gst_select_decoder
 const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecType& type )
 {
@@ -540,9 +574,9 @@ const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecTy
 	if( codec == videoOptions::CODEC_RAW )
 		type = videoOptions::CODEC_CPU;
 
-	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU )
+	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU && !(type == videoOptions::CODEC_V4L2 && gst_query_hw_av1()) )
 	{
-		LogWarning(LOG_GSTREAMER "hardware AV1 decoder not supported, reverting to CPU decoder\n");
+		LogWarning(LOG_GSTREAMER "hardware AV1 decoder requires Orin or newer, reverting to CPU decoder\n");
 		type = videoOptions::CODEC_CPU;
 	}
 
@@ -659,9 +693,9 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 	if( codec == videoOptions::CODEC_RAW )
 		type = videoOptions::CODEC_CPU;
 
-	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU )
+	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU && !(type == videoOptions::CODEC_V4L2 && gst_query_hw_av1() && gst_element_exists("nvv4l2av1enc")) )
 	{
-		LogWarning(LOG_GSTREAMER "gstEncoder -- hardware AV1 encoder not supported, reverting to CPU encoder\n");
+		LogWarning(LOG_GSTREAMER "gstEncoder -- hardware AV1 encoder requires Orin or newer (except Orin Nano), reverting to CPU encoder\n");
 		type = videoOptions::CODEC_CPU;
 	}
 
@@ -707,6 +741,7 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 			case videoOptions::CODEC_H265:   return "nvv4l2h265enc";
 			case videoOptions::CODEC_VP8:	   return "nvv4l2vp8enc";
 			case videoOptions::CODEC_VP9:    return "nvv4l2vp9enc";
+			case videoOptions::CODEC_AV1:    return "nvv4l2av1enc";
 			case videoOptions::CODEC_MJPEG:  return "nvjpegenc";
 		}
 	}

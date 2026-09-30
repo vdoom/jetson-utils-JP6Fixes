@@ -425,10 +425,11 @@ bool gstEncoder::buildLaunchStr()
 		
 		if( mOptions.deviceType == videoOptions::DEVICE_IP )
 		{
+			if( mOptions.codec == videoOptions::CODEC_H264 || mOptions.codec == videoOptions::CODEC_H265 )
+				ss << "insert-sps-pps=1 insert-vui=1 ";		// the other codecs (like nvv4l2av1enc) don't have these
+
 			if( mOptions.codecType == videoOptions::CODEC_V4L2 )
-				ss << "insert-sps-pps=1 insert-vui=1 idrinterval=30 ";
-			else if( mOptions.codecType == videoOptions::CODEC_OMX )
-				ss << "insert-sps-pps=1 insert-vui=1 ";
+				ss << "idrinterval=30 ";
 		}
 		
 		if( mOptions.codecType == videoOptions::CODEC_V4L2 )
