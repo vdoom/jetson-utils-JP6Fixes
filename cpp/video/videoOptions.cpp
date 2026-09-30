@@ -403,8 +403,9 @@ const char* videoOptions::CodecToStr( videoOptions::Codec codec )
 		case CODEC_MPEG2:	return "MPEG2";
 		case CODEC_MPEG4:	return "MPEG4";
 		case CODEC_MJPEG:	return "MJPEG";
+		case CODEC_AV1:	return "AV1";
 	}
-	
+
 	return nullptr;
 }
 
@@ -415,7 +416,7 @@ videoOptions::Codec videoOptions::CodecFromStr( const char* str )
 	if( !str )
 		return CODEC_UNKNOWN;
 
-	for( int n=0; n <= CODEC_MJPEG; n++ )
+	for( int n=0; n <= CODEC_AV1; n++ )
 	{
 		const Codec value = (Codec)n;
 

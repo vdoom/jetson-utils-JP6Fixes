@@ -40,7 +40,7 @@ struct _GstAppSink;
  *
  * gstDecoder supports loading video files from disk (MKV, MP4, AVI, FLV)
  * and RTP/RTSP network streams over UDP/IP. The supported decoder codecs
- * are H.264, H.265, VP8, VP9, MPEG-2, MPEG-4, and MJPEG.
+ * are H.264, H.265, AV1, VP8, VP9, MPEG-2, MPEG-4, and MJPEG.
  *
  * @note gstDecoder implements the videoSource interface and is intended to
  * be used through that as opposed to directly.  videoSource implements

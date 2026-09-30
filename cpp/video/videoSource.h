@@ -48,7 +48,7 @@
 		  "  --input-rate=RATE      explicitly request a framerate of the stream (optional)\n"	\
 		  "  --input-save=FILE      path to video file for saving the input stream to disk\n"	\
 		  "  --input-codec=CODEC    RTP requires the codec to be set, one of these:\n"			\
-		  "                             * h264, h265\n"									\
+		  "                             * h264, h265, av1\n"									\
 		  "                             * vp8, vp9\n"									\
 		  "                             * mpeg2, mpeg4\n"									\
 		  "                             * mjpeg\n"        								\
@@ -108,7 +108,7 @@
  *        contain wildcard characters, for example `"images/*.jpg"` - however when using wildcards
  *        from the command line, enclose the string in quotes otherwise the OS will pre-expand them.
  *        Supported video formats for loading include MKV, MP4, AVI, and FLV. Supported codecs for 
- *        decoding include H.264, H.265, VP8, VP9, MPEG-2, MPEG-4, and MJPEG. Supported image formats
+ *        decoding include H.264, H.265, AV1, VP8, VP9, MPEG-2, MPEG-4, and MJPEG. Supported image formats
  *        for loading include JPG, PNG, TGA, BMP, GIF, PSD, HDR, PIC, and PNM (PPM/PGM binary).
  *  
  * @see URI for info about resource URI formats.

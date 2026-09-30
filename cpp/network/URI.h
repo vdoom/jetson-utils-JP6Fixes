@@ -63,7 +63,7 @@
  *        contain wildcard characters, for example `"images/*.jpg"` - however when using wildcards
  *        from the command line, enclose the string in quotes otherwise the OS will pre-expand them.
  *        Supported video formats for loading include MKV, MP4, AVI, and FLV. Supported codecs for 
- *        decoding include H.264, H.265, VP8, VP9, MPEG-2, MPEG-4, and MJPEG. Supported image formats
+ *        decoding include H.264, H.265, AV1, VP8, VP9, MPEG-2, MPEG-4, and MJPEG. Supported image formats
  *        for loading include JPG, PNG, TGA, BMP, GIF, PSD, HDR, PIC, and PNM (PPM/PGM binary).
  *
  * URI protocols for videoOutput streams include rendering to displays (`display://`), broadcasting RTP/RTSP 
@@ -92,7 +92,7 @@
  *        The `%i` will be replaced with the image number in the sequence.  If just a directory is
  *        specified, then by default it will create a sequence of the form `%i.jpg` in that directory.
  *        Supported video formats for saving include MKV, MP4, AVI, and FLV. Supported codecs for 
- *        encoding include H.264, H.265, VP8, VP9, and MJPEG. Supported image formats for saving 
+ *        encoding include H.264, H.265, AV1, VP8, VP9, and MJPEG. Supported image formats for saving 
  *        include JPG, PNG, TGA, and BMP.
  *
  * The URI strings used should take one of the above forms for input/output streams to be parsed correctly.

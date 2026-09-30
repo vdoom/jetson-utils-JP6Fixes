@@ -87,6 +87,20 @@ const char* gst_format_to_string( imageFormat format );
 bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostringstream& pipeline );
 
 /**
+ * gst_element_exists
+ * @internal
+ * @ingroup codec
+ */
+bool gst_element_exists( const char* name );
+
+/**
+ * gst_element_has_property
+ * @internal
+ * @ingroup codec
+ */
+bool gst_element_has_property( const char* name, const char* property );
+
+/**
  * gst_select_decoder
  * @internal
  * @ingroup codec

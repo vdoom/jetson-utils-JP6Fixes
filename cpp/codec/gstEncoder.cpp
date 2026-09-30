@@ -304,12 +304,30 @@ bool gstEncoder::buildCapsStr()
 	
 	
 
+// append a property to the launch string only if the element has it, because the
+// properties vary between encoders and GStreamer versions, and an unknown one fails the pipeline
+template<typename T>
+static void gst_add_property( std::ostringstream& ss, const char* element, const char* property, const T& value )
+{
+	if( gst_element_has_property(element, property) )
+		ss << property << "=" << value << " ";
+	else
+		LogVerbose(LOG_GSTREAMER "gstEncoder -- %s doesn't have property '%s', skipping it\n", element, property);
+}
+
+
 // buildLaunchStr
 bool gstEncoder::buildLaunchStr()
 {
 	std::ostringstream ss;
-	ss << "appsrc name=mysource is-live=true do-timestamp=true format=3 max-bytes=0 max-buffers=4 leaky-type=2 ! ";  // setup appsrc input element
-	
+	ss << "appsrc name=mysource is-live=true do-timestamp=true format=3 ";  // setup appsrc input element
+
+	// drop the oldest frames when the queue is full (these properties require GStreamer 1.20)
+	if( gst_element_has_property("appsrc", "leaky-type") )
+		ss << "max-bytes=0 max-buffers=4 leaky-type=2 ";
+
+	ss << "! ";
+
 	const URI& uri = GetResource();
 	std::string encoderOptions = "";
 
@@ -322,6 +340,7 @@ bool gstEncoder::buildLaunchStr()
 		LogError(LOG_GSTREAMER "              supported encoder codecs are:\n");
 		LogError(LOG_GSTREAMER "                 * h264\n");
 		LogError(LOG_GSTREAMER "                 * h265\n");
+		LogError(LOG_GSTREAMER "                 * av1\n");
 		LogError(LOG_GSTREAMER "                 * vp8\n");
 		LogError(LOG_GSTREAMER "                 * vp9\n");
 		LogError(LOG_GSTREAMER "                 * mjpeg\n");
@@ -342,9 +361,55 @@ bool gstEncoder::buildLaunchStr()
 		{
 			ss << "bitrate=" << mOptions.bitRate / 1000 << " ";	// x264enc/x265enc bitrates are in kbits
 			ss << "speed-preset=ultrafast tune=zerolatency ";
-			
+
+			// some aarch64 builds of x265 don't detect the CPU cores and run single-threaded,
+			// so size the thread pool explicitly (keeps WPP multithreading with zerolatency)
+			if( mOptions.codec == videoOptions::CODEC_H265 )
+				ss << "option-string=\"pools=" << sysconf(_SC_NPROCESSORS_ONLN) << "\" ";
+
 			if( mOptions.deviceType == videoOptions::DEVICE_IP )
-				ss << "key-int-max=15 insert-vui=1 intra-refresh=true ";			// send keyframes/I-frames more frequently for network streams
+			{
+				ss << "key-int-max=15 ";			// send keyframes/I-frames more frequently for network streams
+
+				if( mOptions.codec == videoOptions::CODEC_H264 )
+					ss << "insert-vui=1 intra-refresh=true ";	// x265enc doesn't have these
+			}
+		}
+		else if( mOptions.codec == videoOptions::CODEC_AV1 )
+		{
+			// realtime settings for each AV1 encoder, only the properties that the installed version has get set
+			const int keyframeInterval = (int)mOptions.frameRate;  // one keyframe per second for network streams
+
+			if( strcmp(encoder, "svtav1enc") == 0 )
+			{
+				gst_add_property(ss, encoder, "preset", 12);	// 0 = best quality, 13 = fastest
+				gst_add_property(ss, encoder, "target-bitrate", mOptions.bitRate / 1000);	// kbits
+
+				if( mOptions.deviceType == videoOptions::DEVICE_IP )
+					gst_add_property(ss, encoder, "intra-period-length", keyframeInterval);
+			}
+			else if( strcmp(encoder, "av1enc") == 0 )
+			{
+				gst_add_property(ss, encoder, "usage-profile", "realtime");
+				gst_add_property(ss, encoder, "cpu-used", 8);	// fastest setting that all libaom versions accept
+				gst_add_property(ss, encoder, "end-usage", "cbr");
+				gst_add_property(ss, encoder, "target-bitrate", mOptions.bitRate / 1000);	// kbits
+				gst_add_property(ss, encoder, "lag-in-frames", 0);
+				gst_add_property(ss, encoder, "row-mt", "true");
+				gst_add_property(ss, encoder, "threads", sysconf(_SC_NPROCESSORS_ONLN));
+
+				if( mOptions.deviceType == videoOptions::DEVICE_IP )
+					gst_add_property(ss, encoder, "keyframe-max-dist", keyframeInterval);
+			}
+			else if( strcmp(encoder, "rav1enc") == 0 )
+			{
+				gst_add_property(ss, encoder, "speed-preset", 10);	// 0 = best quality, 10 = fastest
+				gst_add_property(ss, encoder, "low-latency", "true");
+				gst_add_property(ss, encoder, "bitrate", mOptions.bitRate);	// bits
+
+				if( mOptions.deviceType == videoOptions::DEVICE_IP )
+					gst_add_property(ss, encoder, "max-key-frame-interval", keyframeInterval);
+			}
 		}
 		else if( mOptions.codec == videoOptions::CODEC_VP8 || mOptions.codec == videoOptions::CODEC_VP9 )
 		{
@@ -378,6 +443,8 @@ bool gstEncoder::buildLaunchStr()
 		ss << "! video/x-vp8 ! ";
 	else if( mOptions.codec == videoOptions::CODEC_VP9 )
 		ss << "! video/x-vp9 ! ";
+	else if( mOptions.codec == videoOptions::CODEC_AV1 )
+		ss << "! video/x-av1 ! ";
 	else if( mOptions.codec == videoOptions::CODEC_MJPEG )
 		ss << "! image/jpeg ! ";
 	
@@ -398,6 +465,26 @@ bool gstEncoder::buildLaunchStr()
 	}
 	else if( uri.protocol == "rtp" || uri.protocol == "rtsp" || uri.protocol == "webrtc" )
 	{
+		if( mOptions.codec == videoOptions::CODEC_AV1 )
+		{
+			if( uri.protocol == "webrtc" )
+			{
+				LogError(LOG_GSTREAMER "gstEncoder -- webrtc output doesn't support AV1 (use h264, vp8, or vp9)\n");
+				return false;
+			}
+
+			if( !gst_element_exists("rtpav1pay") )
+			{
+				LogError(LOG_GSTREAMER "gstEncoder -- AV1 over %s requires the rtpav1pay element, which wasn't found\n", uri.protocol.c_str());
+				LogError(LOG_GSTREAMER "              it's in the rtp plugin from gst-plugins-rs (https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs)\n");
+				return false;
+			}
+
+			// packetize the encoder output into the OBU stream that rtpav1pay expects (av1parse requires GStreamer 1.20)
+			if( gst_element_exists("av1parse") )
+				ss << "av1parse ! ";
+		}
+
 		if( mOptions.codec == videoOptions::CODEC_H264 )
 			ss << "rtph264pay";
 		else if( mOptions.codec == videoOptions::CODEC_H265 )
@@ -406,6 +493,8 @@ bool gstEncoder::buildLaunchStr()
 			ss << "rtpvp8pay";
 		else if( mOptions.codec == videoOptions::CODEC_VP9 )
 			ss << "rtpvp9pay";
+		else if( mOptions.codec == videoOptions::CODEC_AV1 )
+			ss << "rtpav1pay";
 		else if( mOptions.codec == videoOptions::CODEC_MJPEG )
 			ss << "rtpjpegpay";
 
@@ -454,6 +543,12 @@ bool gstEncoder::buildLaunchStr()
 	}
 	else if( uri.protocol == "rtmp" )
 	{
+		if( mOptions.codec == videoOptions::CODEC_AV1 )
+		{
+			LogError(LOG_GSTREAMER "gstEncoder -- rtmp output doesn't support AV1 (use h264)\n");
+			return false;
+		}
+
 		ss << "flvmux streamable=true ! queue ! rtmpsink location=";
 		ss << uri.string << " ";
 	}

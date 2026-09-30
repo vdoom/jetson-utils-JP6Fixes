@@ -45,7 +45,7 @@
 		  "                             * webrtc://@:1234/my_stream (WebRTC stream)\n"      	\
 		  "                             * display://0               (OpenGL window)\n" 		\
 		  "  --output-codec=CODEC   desired codec for compressed output streams:\n"		\
-		  "                            * h264 (default), h265\n"						\
+		  "                            * h264 (default), h265, av1\n"						\
 		  "                            * vp8, vp9\n"									\
 		  "                            * mpeg2, mpeg4\n"								\
 		  "                            * mjpeg\n"        								\
@@ -95,7 +95,7 @@
  *        The `%i` will be replaced with the image number in the sequence.  If just a directory is
  *        specified, then by default it will create a sequence of the form `%i.jpg` in that directory.
  *        Supported video formats for saving include MKV, MP4, AVI, and FLV. Supported codecs for 
- *        encoding include H.264, H.265, VP8, VP9, and MJPEG. Supported image formats for saving 
+ *        encoding include H.264, H.265, AV1, VP8, VP9, and MJPEG. Supported image formats for saving 
  *        include JPG, PNG, TGA, and BMP.
  *
  * @see URI for info about resource URI formats.

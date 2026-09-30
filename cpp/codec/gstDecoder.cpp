@@ -468,6 +468,8 @@ bool gstDecoder::discover()
 		mOptions.codec = videoOptions::CODEC_VP8;
 	else if( videoCaps.find("video/x-vp9") != std::string::npos )
 		mOptions.codec = videoOptions::CODEC_VP9;
+	else if( videoCaps.find("video/x-av1") != std::string::npos )
+		mOptions.codec = videoOptions::CODEC_AV1;
 	else if( videoCaps.find("image/jpeg") != std::string::npos )
 		mOptions.codec = videoOptions::CODEC_MJPEG;
 	else if( videoCaps.find("video/mpeg") != std::string::npos )
@@ -483,6 +485,7 @@ bool gstDecoder::discover()
 		LogError(LOG_GSTREAMER "gstDecoder -- unsupported codec, supported codecs are:\n");
 		LogError(LOG_GSTREAMER "                 * h264\n");
 		LogError(LOG_GSTREAMER "                 * h265\n");
+		LogError(LOG_GSTREAMER "                 * av1\n");
 		LogError(LOG_GSTREAMER "                 * vp8\n");
 		LogError(LOG_GSTREAMER "                 * vp9\n");
 		LogError(LOG_GSTREAMER "                 * mpeg2\n");
@@ -518,6 +521,7 @@ bool gstDecoder::buildLaunchStr()
 		LogError(LOG_GSTREAMER "              supported decoder codecs are:\n");
 		LogError(LOG_GSTREAMER "                 * h264\n");
 		LogError(LOG_GSTREAMER "                 * h265\n");
+		LogError(LOG_GSTREAMER "                 * av1\n");
 		LogError(LOG_GSTREAMER "                 * vp8\n");
 		LogError(LOG_GSTREAMER "                 * vp9\n");
 		LogError(LOG_GSTREAMER "                 * mpeg2\n");
@@ -534,6 +538,8 @@ bool gstDecoder::buildLaunchStr()
 		parser = "h264parse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_H265 )
 		parser = "h265parse ! ";
+	else if( mOptions.codec == videoOptions::CODEC_AV1 && gst_element_exists("av1parse") )
+		parser = "av1parse ! ";	// requires GStreamer 1.20
 	else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 		parser = "mpegvideoparse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
@@ -541,6 +547,22 @@ bool gstDecoder::buildLaunchStr()
 
 	// determine the requested protocol to use
 	const URI& uri = GetResource();
+
+	if( mOptions.codec == videoOptions::CODEC_AV1 && (uri.protocol == "rtp" || uri.protocol == "rtsp" || uri.protocol == "webrtc") )
+	{
+		if( uri.protocol == "webrtc" )
+		{
+			LogError(LOG_GSTREAMER "gstDecoder -- webrtc input doesn't support AV1 (use h264, vp8, or vp9)\n");
+			return false;
+		}
+
+		if( !gst_element_exists("rtpav1depay") )
+		{
+			LogError(LOG_GSTREAMER "gstDecoder -- AV1 over %s requires the rtpav1depay element, which wasn't found\n", uri.protocol.c_str());
+			LogError(LOG_GSTREAMER "              it's in the rtp plugin from gst-plugins-rs (https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs)\n");
+			return false;
+		}
+	}
 
 	if( uri.protocol == "file" )
 	{
@@ -594,6 +616,8 @@ bool gstDecoder::buildLaunchStr()
 			ss << "VP8\" ! rtpvp8depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_VP9 )
 			ss << "VP9\" ! rtpvp9depay ! ";
+		else if( mOptions.codec == videoOptions::CODEC_AV1 )
+			ss << "AV1\" ! rtpav1depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 			ss << "MP2T\" ! rtpmp2tdepay ! ";		// MP2T-ES
 		else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
@@ -629,6 +653,8 @@ bool gstDecoder::buildLaunchStr()
 			ss << "rtpvp8depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_VP9 )
 			ss << "rtpvp9depay ! ";
+		else if( mOptions.codec == videoOptions::CODEC_AV1 )
+			ss << "rtpav1depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 			ss << "rtpmp2tdepay ! ";		// MP2T-ES
 		else if( mOptions.codec == videoOptions::CODEC_MPEG4 )

@@ -39,7 +39,7 @@ struct WebRTCPeer;
  *
  * The encoder can write the encoded video to disk in (MKV, MP4, AVI, FLV),
  * or stream over the network to a remote host via RTP/RTSP using UDP/IP.
- * The supported encoder codecs are H.264, H.265, VP8, VP9, and MJPEG.
+ * The supported encoder codecs are H.264, H.265, AV1, VP8, VP9, and MJPEG.
  *
  * @note gstEncoder implements the videoOutput interface and is intended to
  * be used through that as opposed to directly.  videoOutput implements

@@ -108,6 +108,8 @@ videoOptions::Codec gst_parse_codec( GstStructure* caps )
 		return videoOptions::CODEC_VP8;
 	else if( strcasecmp(codec, "video/x-vp9") == 0 )
 		return videoOptions::CODEC_VP9;
+	else if( strcasecmp(codec, "video/x-av1") == 0 )
+		return videoOptions::CODEC_AV1;
 	else if( strcasecmp(codec, "image/jpeg") == 0 )
 		return videoOptions::CODEC_MJPEG;
 	else if( strcasecmp(codec, "video/mpeg") == 0 )
@@ -144,6 +146,7 @@ const char* gst_codec_to_string( videoOptions::Codec codec )
 		case videoOptions::CODEC_H265:	return "video/x-h265";
 		case videoOptions::CODEC_VP8:	return "video/x-vp8";
 		case videoOptions::CODEC_VP9:	return "video/x-vp9";
+		case videoOptions::CODEC_AV1:	return "video/x-av1";
 		case videoOptions::CODEC_MJPEG:	return "image/jpeg";
 		case videoOptions::CODEC_MPEG2:	return "video/mpeg, mpegversion=(int)2";
 		case videoOptions::CODEC_MPEG4:	return "video/mpeg, mpegversion=(int)4";
@@ -395,12 +398,18 @@ bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostring
 	}
 	else if( uri.extension == "flv" )
 	{
+		if( codec == videoOptions::CODEC_AV1 )
+		{
+			LogError(LOG_GSTREAMER "FLV format doesn't support codec %s (use mkv or mp4 instead)\n", videoOptions::CodecToStr(codec));
+			return false;
+		}
+
 		ADD_CODEC_PARSER();
 		pipeline << "flvmux ! ";
 	}
 	else if( uri.extension == "avi" )
 	{
-		if( codec == videoOptions::CODEC_H265 || codec == videoOptions::CODEC_VP9 )
+		if( codec == videoOptions::CODEC_H265 || codec == videoOptions::CODEC_VP9 || codec == videoOptions::CODEC_AV1 )
 		{
 			LogError(LOG_GSTREAMER "AVI format doesn't support codec %s\n", videoOptions::CodecToStr(codec));
 			LogError(LOG_GSTREAMER "supported AVI codecs are:\n");
@@ -436,6 +445,79 @@ bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostring
 }
 
 
+// gst_element_exists
+bool gst_element_exists( const char* name )
+{
+	if( !name )
+		return false;
+
+	GstElementFactory* factory = gst_element_factory_find(name);
+
+	if( !factory )
+		return false;
+
+	gst_object_unref(factory);
+	return true;
+}
+
+
+// gst_element_has_property
+bool gst_element_has_property( const char* name, const char* property )
+{
+	if( !name || !property )
+		return false;
+
+	GstElement* element = gst_element_factory_make(name, NULL);
+
+	if( !element )
+		return false;
+
+	const bool found = (g_object_class_find_property(G_OBJECT_GET_CLASS(element), property) != NULL);
+
+	gst_object_unref(element);
+	return found;
+}
+
+
+// return the first element from a NULL-terminated list that is installed
+static const char* gst_first_element( const char** names )
+{
+	for( uint32_t n=0; names[n] != NULL; n++ )
+	{
+		if( gst_element_exists(names[n]) )
+			return names[n];
+	}
+
+	return NULL;
+}
+
+
+// select a software AV1 decoder
+static const char* gst_select_av1_decoder()
+{
+	static const char* decoders[] = { "dav1ddec", "av1dec", NULL };
+	const char* decoder = gst_first_element(decoders);
+
+	if( !decoder )
+		LogError(LOG_GSTREAMER "no AV1 software decoder found (dav1ddec or av1dec from gstreamer1.0-plugins-bad)\n");
+
+	return decoder;
+}
+
+
+// select a software AV1 encoder (in order of preference for realtime encoding speed)
+static const char* gst_select_av1_encoder()
+{
+	static const char* encoders[] = { "svtav1enc", "av1enc", "rav1enc", NULL };
+	const char* encoder = gst_first_element(encoders);
+
+	if( !encoder )
+		LogError(LOG_GSTREAMER "no AV1 software encoder found (svtav1enc, av1enc from gstreamer1.0-plugins-bad, or rav1enc from gst-plugins-rs)\n");
+
+	return encoder;
+}
+
+
 // gst_select_decoder
 const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecType& type )
 {
@@ -457,7 +539,13 @@ const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecTy
 	
 	if( codec == videoOptions::CODEC_RAW )
 		type = videoOptions::CODEC_CPU;
-	
+
+	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU )
+	{
+		LogWarning(LOG_GSTREAMER "hardware AV1 decoder not supported, reverting to CPU decoder\n");
+		type = videoOptions::CODEC_CPU;
+	}
+
 	if( type == videoOptions::CODEC_CPU )
 	{
 		switch(codec)
@@ -466,6 +554,7 @@ const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecTy
 			case videoOptions::CODEC_H265:   return "avdec_h265";
 			case videoOptions::CODEC_VP8:	   return "vp8dec";
 			case videoOptions::CODEC_VP9:    return "vp9dec";
+			case videoOptions::CODEC_AV1:    return gst_select_av1_decoder();
 			case videoOptions::CODEC_MPEG2:  return "avdec_mpeg2video";
 			case videoOptions::CODEC_MPEG4:  return "avdec_mpeg4";
 			case videoOptions::CODEC_MJPEG:  return "jpegdec";
@@ -569,7 +658,13 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 	
 	if( codec == videoOptions::CODEC_RAW )
 		type = videoOptions::CODEC_CPU;
-	
+
+	if( codec == videoOptions::CODEC_AV1 && type != videoOptions::CODEC_CPU )
+	{
+		LogWarning(LOG_GSTREAMER "gstEncoder -- hardware AV1 encoder not supported, reverting to CPU encoder\n");
+		type = videoOptions::CODEC_CPU;
+	}
+
 	if( type == videoOptions::CODEC_CPU )
 	{
 		switch(codec)
@@ -578,6 +673,7 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 			case videoOptions::CODEC_H265:   return "x265enc";
 			case videoOptions::CODEC_VP8:	   return "vp8enc";
 			case videoOptions::CODEC_VP9:    return "vp9enc";
+			case videoOptions::CODEC_AV1:    return gst_select_av1_encoder();
 			case videoOptions::CODEC_MJPEG:  return "jpegenc";
 		}
 	}
