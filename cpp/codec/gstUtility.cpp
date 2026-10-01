@@ -630,11 +630,9 @@ const char* gst_svtav1_low_delay()
 
 	LogVerbose(LOG_GSTREAMER "gstEncoder -- svtav1enc uses SVT-AV1 %d.%d.%d%s\n", major, minor, patch, fixed ? " (with the low-delay fix)" : "");
 
-	if( major == 0 )
-		return NULL;  // unknown version
-
-	// svtav1enc deadlocks in low delay with SVT-AV1 2.3+, unless it has the fix
-	if( !fixed && (major > 2 || (major == 2 && minor >= 3)) )
+	// upstream svtav1enc deadlocks in low delay with SVT-AV1 2.3+, and with any version it reports
+	// the random-access latency (1.25 s), so sinks that sync hold every frame and appsrc drops the rest
+	if( !fixed || major == 0 )
 		return NULL;
 
 	// rtc is the fastest low-delay mode, it was added in SVT-AV1 3.1

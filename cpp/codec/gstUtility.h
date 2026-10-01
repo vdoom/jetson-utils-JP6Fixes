@@ -110,8 +110,8 @@ bool gst_element_property_range( const char* name, const char* property, int64_t
 
 /**
  * gst_svtav1_low_delay
- * Get the svtav1enc parameters-string for low-delay CBR, or NULL if low delay isn't safe with the installed
- * SVT-AV1 (svtav1enc deadlocks in low delay with SVT-AV1 2.3+, unless it's built with scripts/gst-svtav1).
+ * Get the svtav1enc parameters-string for low-delay CBR, or NULL if low delay isn't safe - it needs the
+ * svtav1enc from scripts/gst-svtav1 (upstream deadlocks with SVT-AV1 2.3+ and reports too much latency).
  * @internal
  * @ingroup codec
  */

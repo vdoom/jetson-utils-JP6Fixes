@@ -423,7 +423,7 @@ bool gstEncoder::buildLaunchStr()
 				if( lowDelay != NULL )
 					gst_add_property(ss, encoder, "parameters-string", std::string("\"") + lowDelay + "\"");
 				else
-					LogWarning(LOG_GSTREAMER "gstEncoder -- svtav1enc can't use low delay with this SVT-AV1 version (it deadlocks), expect ~1 s of latency - scripts/gst-svtav1 installs one with the fix\n");
+					LogWarning(LOG_GSTREAMER "gstEncoder -- this svtav1enc can't do low delay, expect ~1 s of latency - scripts/gst-svtav1 installs one that can\n");
 			}
 			else if( strcmp(encoder, "av1enc") == 0 )
 			{
