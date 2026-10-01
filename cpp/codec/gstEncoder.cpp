@@ -416,6 +416,14 @@ bool gstEncoder::buildLaunchStr()
 
 				if( mOptions.deviceType == videoOptions::DEVICE_IP )
 					gst_add_property(ss, encoder, "intra-period-length", keyframeInterval);
+
+				// low-delay CBR - the default random-access mode adds ~1 s of latency (~10 ms in low delay on Orin Nano)
+				const char* lowDelay = gst_svtav1_low_delay();
+
+				if( lowDelay != NULL )
+					gst_add_property(ss, encoder, "parameters-string", std::string("\"") + lowDelay + "\"");
+				else
+					LogWarning(LOG_GSTREAMER "gstEncoder -- svtav1enc can't use low delay with this SVT-AV1 version (it deadlocks), expect ~1 s of latency - scripts/gst-svtav1 installs one with the fix\n");
 			}
 			else if( strcmp(encoder, "av1enc") == 0 )
 			{

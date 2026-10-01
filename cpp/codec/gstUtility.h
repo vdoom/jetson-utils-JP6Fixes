@@ -109,6 +109,15 @@ bool gst_element_has_property( const char* name, const char* property );
 bool gst_element_property_range( const char* name, const char* property, int64_t* min, int64_t* max );
 
 /**
+ * gst_svtav1_low_delay
+ * Get the svtav1enc parameters-string for low-delay CBR, or NULL if low delay isn't safe with the installed
+ * SVT-AV1 (svtav1enc deadlocks in low delay with SVT-AV1 2.3+, unless it's built with scripts/gst-svtav1).
+ * @internal
+ * @ingroup codec
+ */
+const char* gst_svtav1_low_delay();
+
+/**
  * gst_select_decoder
  * @internal
  * @ingroup codec

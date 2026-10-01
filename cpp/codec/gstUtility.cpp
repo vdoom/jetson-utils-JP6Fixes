@@ -31,6 +31,9 @@
 #include <strings.h>
 #include <algorithm>
 
+#include <dlfcn.h>
+#include <link.h>
+
 
 //---------------------------------------------------------------------------------------------
 imageFormat gst_parse_format( GstStructure* caps )
@@ -558,6 +561,89 @@ static const char* gst_select_av1_encoder()
 		LogError(LOG_GSTREAMER "no AV1 software encoder found (svtav1enc, av1enc from gstreamer1.0-plugins-bad, or rav1enc from gst-plugins-rs)\n");
 
 	return encoder;
+}
+
+
+// find the path of a loaded shared library (by part of its name)
+static int gst_find_library( struct dl_phdr_info* info, size_t size, void* user )
+{
+	std::pair<const char*, std::string>* search = (std::pair<const char*, std::string>*)user;
+
+	if( !info->dlpi_name || !strstr(info->dlpi_name, search->first) )
+		return 0;
+
+	search->second = info->dlpi_name;
+	return 1;
+}
+
+
+// gst_svtav1_low_delay
+const char* gst_svtav1_low_delay()
+{
+	static bool checked = false;
+	static const char* params = NULL;
+
+	if( checked )
+		return params;
+
+	checked = true;
+
+	// creating the element loads the plugin and SVT-AV1
+	GstElement* element = gst_element_factory_make("svtav1enc", NULL);
+
+	if( !element )
+		return NULL;
+
+	// the plugin built by scripts/gst-svtav1 has the fix for low delay
+	GstPlugin* plugin = gst_plugin_feature_get_plugin(GST_PLUGIN_FEATURE(gst_element_get_factory(element)));
+	const bool fixed = plugin != NULL && gst_plugin_get_package(plugin) != NULL && strstr(gst_plugin_get_package(plugin), "low-delay fix") != NULL;
+
+	if( plugin != NULL )
+		gst_object_unref(plugin);
+
+	gst_object_unref(element);
+
+	// get the version from the SVT-AV1 library that the plugin loaded
+	std::pair<const char*, std::string> library("libSvtAv1Enc.so", "");
+	dl_iterate_phdr(gst_find_library, &library);
+
+	int major = 0, minor = 0, patch = 0;
+
+	if( library.second.length() > 0 )
+	{
+		void* handle = dlopen(library.second.c_str(), RTLD_LAZY | RTLD_NOLOAD);
+
+		if( handle != NULL )
+		{
+			typedef const char* (*svt_av1_get_version_t)(void);
+			svt_av1_get_version_t svt_av1_get_version = (svt_av1_get_version_t)dlsym(handle, "svt_av1_get_version");
+
+			if( svt_av1_get_version != NULL && svt_av1_get_version() != NULL )
+			{
+				const char* version = svt_av1_get_version();
+				sscanf(version[0] == 'v' ? version + 1 : version, "%d.%d.%d", &major, &minor, &patch);
+			}
+
+			dlclose(handle);
+		}
+	}
+
+	LogVerbose(LOG_GSTREAMER "gstEncoder -- svtav1enc uses SVT-AV1 %d.%d.%d%s\n", major, minor, patch, fixed ? " (with the low-delay fix)" : "");
+
+	if( major == 0 )
+		return NULL;  // unknown version
+
+	// svtav1enc deadlocks in low delay with SVT-AV1 2.3+, unless it has the fix
+	if( !fixed && (major > 2 || (major == 2 && minor >= 3)) )
+		return NULL;
+
+	// rtc is the fastest low-delay mode, it was added in SVT-AV1 3.1
+	if( major > 3 || (major == 3 && minor >= 1) )
+		params = "rtc=1:rc=2";
+	else
+		params = "pred-struct=1:rc=2";
+
+	return params;
 }
 
 
