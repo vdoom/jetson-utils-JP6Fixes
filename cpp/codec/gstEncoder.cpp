@@ -601,12 +601,7 @@ bool gstEncoder::buildLaunchStr()
 	{
 		if( mOptions.codec == videoOptions::CODEC_AV1 )
 		{
-			if( uri.protocol == "webrtc" )
-			{
-				LogError(LOG_GSTREAMER "gstEncoder -- webrtc output doesn't support AV1 (use h264, vp8, or vp9)\n");
-				return false;
-			}
-
+			// (AV1 over WebRTC was tested with GStreamer 1.24 and a webrtcbin client, not with browsers)
 			if( !gst_element_exists("rtpav1pay") )
 			{
 				LogError(LOG_GSTREAMER "gstEncoder -- AV1 over %s requires the rtpav1pay element, which wasn't found\n", uri.protocol.c_str());
