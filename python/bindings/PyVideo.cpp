@@ -97,7 +97,10 @@ static PyObject* PyVideoOptions_ToDict( const videoOptions& options )
 	PYDICT_SET_STRING(dict, "codec", videoOptions::CodecToStr(options.codec));
 	
 	if( options.ioType == videoOptions::OUTPUT )
+	{
 		PYDICT_SET_UINT(dict, "bitrate", options.bitRate);
+		PYDICT_SET_UINT(dict, "keyframeInterval", options.keyframeInterval);
+	}
 	
 	if( options.ioType == videoOptions::INPUT )
 	{
@@ -145,6 +148,7 @@ static bool PyVideoOptions_FromDict( PyObject* dict, videoOptions& options )
 	PYDICT_GET_UINT(dict, "width", options.width);
 	PYDICT_GET_UINT(dict, "height", options.height);
 	PYDICT_GET_UINT(dict, "bitrate", options.bitRate);
+	PYDICT_GET_UINT(dict, "keyframeInterval", options.keyframeInterval);
 	PYDICT_GET_UINT(dict, "numBuffers", options.numBuffers);
 	
 	PYDICT_GET_INT(dict, "loop", options.loop);

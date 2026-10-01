@@ -35,6 +35,7 @@ videoOptions::videoOptions()
 	frameRate   = 0;
 	frameCount  = 0;
 	bitRate     = 0;
+	keyframeInterval = 0;
 	numBuffers  = 4;
 	loop        = 0;
 	latency     = 10;
@@ -84,6 +85,9 @@ void videoOptions::Print( const char* prefix ) const
 	
 	if( ioType == OUTPUT && (deviceType == DEVICE_IP || deviceType == DEVICE_FILE) )
 		LogInfo("  -- bitRate:    %u\n", bitRate);
+
+	if( ioType == OUTPUT && keyframeInterval != 0 )
+		LogInfo("  -- keyframeInterval: %u\n", keyframeInterval);
 	
 	LogInfo("  -- numBuffers: %u\n", numBuffers);
 	LogInfo("  -- zeroCopy:   %s\n", zeroCopy ? "true" : "false");	
@@ -231,6 +235,10 @@ bool videoOptions::Parse( const char* URI, const commandLine& cmdLine, videoOpti
 	// bitrate
 	if( type == OUTPUT )
 		bitRate = cmdLine.GetUnsignedInt("bitrate", bitRate);
+
+	// keyframe interval
+	if( type == OUTPUT )
+		keyframeInterval = cmdLine.GetUnsignedInt("keyframe-interval", keyframeInterval);
 
 	// loop
 	if( type == INPUT )

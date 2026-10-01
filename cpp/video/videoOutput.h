@@ -57,6 +57,9 @@
 		  "                         to disk, in addition to the primary output above\n"      \
 		  "  --bitrate=BITRATE      desired target VBR bitrate for compressed streams,\n"    \
 		  "                         in bits per second. The default is 4000000 (4 Mbps)\n"	\
+		  "  --keyframe-interval=N  number of frames between keyframes for compressed streams,\n" \
+		  "                         by default 15-30 for network streams (so clients can join\n" \
+		  "                         them), and the encoder's default for files\n"              \
 		  "  --stun-server=URL      WebRTC connection STUN server (set to 'disabled' for LAN)\n" \
 		  "  --headless             don't create a default OpenGL GUI window\n\n"
 

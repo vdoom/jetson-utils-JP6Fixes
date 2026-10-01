@@ -90,6 +90,13 @@ public:
 	uint32_t bitRate;
 
 	/**
+	 * The number of frames between keyframes for compressed streams (only applies to video codecs like H264/H265/AV1).
+	 * For videoOutput streams, this option can be set from the command line using `--keyframe-interval=N`.
+	 * @note the default (0) gives network streams a keyframe every 15-30 frames, and leaves files at the encoder's default.
+	 */
+	uint32_t keyframeInterval;
+
+	/**
 	 * The number of ring buffers used for threading.
 	 * This option can be set from the command line using `--num-buffers=N`.
 	 * @note the default number of ring buffers is 4.

@@ -428,6 +428,18 @@ bool gstEncoder::buildLaunchStr()
 	
 	// setup the encoder and options
 	ss << encoder << " name=encoder ";
+
+	// frames between keyframes - network streams get one every 15-30 frames by default so clients
+	// can join them, files keep the encoder's default unless --keyframe-interval is set
+	const bool network = (mOptions.deviceType == videoOptions::DEVICE_IP);
+
+	auto keyframeInterval = [&]( uint32_t networkDefault ) -> uint32_t
+	{
+		if( mOptions.keyframeInterval > 0 )
+			return mOptions.keyframeInterval;
+
+		return network ? networkDefault : 0;
+	};
 	
 	if( mOptions.codecType == videoOptions::CODEC_CPU )
 	{
@@ -441,28 +453,23 @@ bool gstEncoder::buildLaunchStr()
 			if( mOptions.codec == videoOptions::CODEC_H265 )
 				ss << "option-string=\"pools=" << sysconf(_SC_NPROCESSORS_ONLN) << "\" ";
 
-			if( mOptions.deviceType == videoOptions::DEVICE_IP )
-			{
-				if( mOptions.codec == videoOptions::CODEC_H264 )
-				{
-					// an IDR every second, so clients that join a running stream (a second RTSP client, or
-					// an RTP receiver started late) can start decoding - nvv4l2decoder can't start from intra
-					// refresh, and x264enc turns forced keyframes into an intra refresh.  The 200 ms VBV keeps
-					// the IDRs smaller than intra refresh's largest frames (57 vs 62 KB at 4 Mbps, 105 KB with
-					// the default 600 ms) so they don't overflow UDP buffers, at ~1 dB better quality.
-					ss << "key-int-max=" << (int)mOptions.frameRate << " vbv-buf-capacity=200 ";
-					ss << "insert-vui=1 ";	// x265enc doesn't have this
-				}
-				else
-				{
-					ss << "key-int-max=15 ";	// send keyframes/I-frames more frequently for network streams
-				}
-			}
+			// x264enc gets an IDR every second, so clients that join a running stream (a second RTSP client,
+			// or an RTP receiver started late) can start decoding - nvv4l2decoder can't start from intra
+			// refresh, and x264enc turns forced keyframes into an intra refresh
+			const uint32_t keyframes = keyframeInterval((mOptions.codec == videoOptions::CODEC_H264) ? (uint32_t)mOptions.frameRate : 15);
+
+			if( keyframes > 0 )
+				ss << "key-int-max=" << keyframes << " ";
+
+			// the 200 ms VBV keeps x264enc's IDRs smaller than intra refresh's largest frames (57 vs 62 KB
+			// at 4 Mbps, 105 KB with the default 600 ms) so they don't overflow UDP buffers, at ~1 dB better quality
+			if( network && mOptions.codec == videoOptions::CODEC_H264 )
+				ss << "vbv-buf-capacity=200 insert-vui=1 ";	// x265enc doesn't have these
 		}
 		else if( mOptions.codec == videoOptions::CODEC_AV1 )
 		{
 			// realtime settings for each AV1 encoder, only the properties that the installed version has get set
-			const int keyframeInterval = (int)mOptions.frameRate;  // one keyframe per second for network streams
+			const uint32_t keyframes = keyframeInterval((uint32_t)mOptions.frameRate);  // one keyframe per second for network streams
 
 			if( strcmp(encoder, "svtav1enc") == 0 )
 			{
@@ -471,8 +478,8 @@ bool gstEncoder::buildLaunchStr()
 
 				// intra-period-length is the frames after each keyframe, and 0 is all-intra mode, which SVT-AV1 4.x
 				// can't run with CBR (and svtav1enc then crashes at EOS), so a keyframe every frame isn't possible
-				if( mOptions.deviceType == videoOptions::DEVICE_IP )
-					gst_add_property(ss, encoder, "intra-period-length", std::max(keyframeInterval - 1, 1));
+				if( keyframes > 0 )
+					gst_add_property(ss, encoder, "intra-period-length", std::max((int)keyframes - 1, 1));
 
 				// low-delay CBR - the default random-access mode adds ~1 s of latency (~10 ms in low delay on Orin Nano)
 				const char* lowDelay = gst_svtav1_low_delay();
@@ -492,8 +499,8 @@ bool gstEncoder::buildLaunchStr()
 				gst_add_property(ss, encoder, "row-mt", "true");
 				gst_add_property(ss, encoder, "threads", sysconf(_SC_NPROCESSORS_ONLN));
 
-				if( mOptions.deviceType == videoOptions::DEVICE_IP )
-					gst_add_property(ss, encoder, "keyframe-max-dist", keyframeInterval);
+				if( keyframes > 0 )
+					gst_add_property(ss, encoder, "keyframe-max-dist", keyframes);
 			}
 			else if( strcmp(encoder, "rav1enc") == 0 )
 			{
@@ -503,31 +510,36 @@ bool gstEncoder::buildLaunchStr()
 				gst_add_property(ss, encoder, "threads", sysconf(_SC_NPROCESSORS_ONLN));
 				gst_add_property(ss, encoder, "tiles", sysconf(_SC_NPROCESSORS_ONLN));	// rav1e only runs tiles in parallel (~4x faster at 720p on Orin Nano)
 
-				if( mOptions.deviceType == videoOptions::DEVICE_IP )
-					gst_add_property(ss, encoder, "max-key-frame-interval", keyframeInterval);
+				if( keyframes > 0 )
+					gst_add_property(ss, encoder, "max-key-frame-interval", keyframes);
 			}
 		}
 		else if( mOptions.codec == videoOptions::CODEC_VP8 || mOptions.codec == videoOptions::CODEC_VP9 )
 		{
 			ss << "target-bitrate=" << mOptions.bitRate << " ";
-			
-			if( mOptions.deviceType == videoOptions::DEVICE_IP )
-				ss << "keyframe-max-dist=30 ";
+
+			const uint32_t keyframes = keyframeInterval(30);
+
+			if( keyframes > 0 )
+				ss << "keyframe-max-dist=" << keyframes << " ";
 		}
 	}
 	else if( mOptions.codec != videoOptions::CODEC_MJPEG )
 	{
 		ss << "bitrate=" << mOptions.bitRate << " ";
+
+		const uint32_t keyframes = keyframeInterval(30);
+
+		if( mOptions.codecType == videoOptions::CODEC_V4L2 && keyframes > 0 )
+			ss << "idrinterval=" << keyframes << " iframeinterval=" << keyframes << " ";
 		
-		if( mOptions.deviceType == videoOptions::DEVICE_IP )
+		if( network )
 		{
 			if( mOptions.codec == videoOptions::CODEC_H264 || mOptions.codec == videoOptions::CODEC_H265 )
 				ss << "insert-sps-pps=1 insert-vui=1 ";		// the other codecs (like nvv4l2av1enc) don't have these
 
 			if( mOptions.codecType == videoOptions::CODEC_V4L2 )
 			{
-				ss << "idrinterval=30 ";
-
 				// the default VBV is 4 Mbit regardless of bitrate, which lets the rate control put most of
 				// a second's bit budget into every IDR (JetPack 7 / L4T R39 makes ~280KB IDRs at 3.5 Mbps,
 				// ~75x a P-frame) - that burst shows up as a hitch once per IDR and gets packets dropped.
