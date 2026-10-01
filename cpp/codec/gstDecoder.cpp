@@ -624,6 +624,10 @@ bool gstDecoder::buildLaunchStr()
 		ss << "udpsrc port=" << uri.port;
 		ss << " multicast-group=" << uri.location << " auto-multicast=true";
 
+		// the default UDP receive buffer (212 KB on JetPack) overflows with large frames, like AV1 keyframes -
+		// the kernel caps this to net.core.rmem_max, and udpsrc warns to raise it when it can't get it all
+		ss << " buffer-size=" << (4 * 1024 * 1024);
+
 		ss << " caps=\"" << "application/x-rtp,media=(string)video,clock-rate=(int)90000,encoding-name=(string)";
 		
 		if( mOptions.codec == videoOptions::CODEC_H264 )
