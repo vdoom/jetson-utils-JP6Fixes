@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <strings.h>
 #include <algorithm>
+#include <map>
+#include <string>
 
 #include <dlfcn.h>
 #include <link.h>
@@ -805,6 +807,74 @@ static bool gst_query_hw_encoder()
 }
 
 
+// gst_hw_encoder_works
+static bool gst_hw_encoder_works( const char* encoder )
+{
+	// the V4L2 encoders can exist without working hardware behind them (in a container without the
+	// devices, or when the GPU failed to start) and /dev/v4l2-nvenc always opens, so that only shows
+	// up once frames go through - encode a couple of frames once, before the real pipeline is built
+	static std::map<std::string, bool> results;
+
+	const std::map<std::string, bool>::iterator cached = results.find(encoder);
+
+	if( cached != results.end() )
+		return cached->second;
+
+	bool works = false;
+
+	if( gst_element_exists(encoder) )
+	{
+		const std::string launchStr = std::string("videotestsrc num-buffers=2 ! video/x-raw,width=320,height=240,format=I420,framerate=30/1 ! "
+										  "nvvidconv ! video/x-raw(memory:NVMM) ! ") + encoder + " ! fakesink";
+
+		GError* err = NULL;
+		GstElement* pipeline = gst_parse_launch(launchStr.c_str(), &err);
+
+		if( err != NULL )
+		{
+			LogVerbose(LOG_GSTREAMER "%s test pipeline couldn't be created (%s)\n", encoder, err->message);
+			g_error_free(err);
+		}
+
+		if( pipeline != NULL )
+		{
+			GstBus* bus = gst_element_get_bus(pipeline);
+
+			if( gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE )
+			{
+				GstMessage* msg = gst_bus_timed_pop_filtered(bus, 5 * GST_SECOND, (GstMessageType)(GST_MESSAGE_EOS|GST_MESSAGE_ERROR));
+
+				if( msg != NULL && GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS )
+				{
+					works = true;
+				}
+				else if( msg != NULL )
+				{
+					GError* error = NULL;
+					gst_message_parse_error(msg, &error, NULL);
+					LogWarning(LOG_GSTREAMER "%s failed to encode test frames: %s\n", encoder, error != NULL ? error->message : "unknown error");
+					g_clear_error(&error);
+				}
+				else
+				{
+					LogWarning(LOG_GSTREAMER "%s timed out encoding test frames\n", encoder);
+				}
+
+				if( msg != NULL )
+					gst_message_unref(msg);
+			}
+
+			gst_element_set_state(pipeline, GST_STATE_NULL);
+			gst_object_unref(bus);
+			gst_object_unref(pipeline);
+		}
+	}
+
+	results[encoder] = works;
+	return works;
+}
+
+
 // gst_select_encoder
 const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecType& type )
 {
@@ -881,15 +951,26 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 	}
 	else if( type == videoOptions::CODEC_V4L2 )
 	{
+		const char* encoder = NULL;
+
 		switch(codec)
 		{
-			case videoOptions::CODEC_H264:   return "nvv4l2h264enc";
-			case videoOptions::CODEC_H265:   return "nvv4l2h265enc";
-			case videoOptions::CODEC_VP8:	   return "nvv4l2vp8enc";
-			case videoOptions::CODEC_VP9:    return "nvv4l2vp9enc";
-			case videoOptions::CODEC_AV1:    return "nvv4l2av1enc";
+			case videoOptions::CODEC_H264:   encoder = "nvv4l2h264enc"; break;
+			case videoOptions::CODEC_H265:   encoder = "nvv4l2h265enc"; break;
+			case videoOptions::CODEC_VP8:	   encoder = "nvv4l2vp8enc"; break;
+			case videoOptions::CODEC_VP9:    encoder = "nvv4l2vp9enc"; break;
+			case videoOptions::CODEC_AV1:    encoder = "nvv4l2av1enc"; break;
 			case videoOptions::CODEC_MJPEG:  return "nvjpegenc";
 		}
+
+		if( encoder != NULL && !gst_hw_encoder_works(encoder) )
+		{
+			LogWarning(LOG_GSTREAMER "gstEncoder -- %s failed to start, reverting to CPU encoder\n", encoder);
+			type = videoOptions::CODEC_CPU;
+			return gst_select_encoder(codec, type);
+		}
+
+		return encoder;
 	}
 	
 	return NULL;
