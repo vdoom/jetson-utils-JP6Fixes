@@ -469,8 +469,10 @@ bool gstEncoder::buildLaunchStr()
 				gst_add_property(ss, encoder, "preset", 12);	// 0 = best quality, 13 = fastest
 				gst_add_property(ss, encoder, "target-bitrate", mOptions.bitRate / 1000);	// kbits
 
+				// intra-period-length is the frames after each keyframe, and 0 is all-intra mode, which SVT-AV1 4.x
+				// can't run with CBR (and svtav1enc then crashes at EOS), so a keyframe every frame isn't possible
 				if( mOptions.deviceType == videoOptions::DEVICE_IP )
-					gst_add_property(ss, encoder, "intra-period-length", keyframeInterval);
+					gst_add_property(ss, encoder, "intra-period-length", std::max(keyframeInterval - 1, 1));
 
 				// low-delay CBR - the default random-access mode adds ~1 s of latency (~10 ms in low delay on Orin Nano)
 				const char* lowDelay = gst_svtav1_low_delay();
