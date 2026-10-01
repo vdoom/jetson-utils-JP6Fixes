@@ -444,7 +444,7 @@ bool gstEncoder::buildLaunchStr()
 				gst_add_property(ss, encoder, "low-latency", "true");
 				gst_add_property(ss, encoder, "bitrate", mOptions.bitRate);	// bits
 				gst_add_property(ss, encoder, "threads", sysconf(_SC_NPROCESSORS_ONLN));
-				gst_add_property(ss, encoder, "tiles", sysconf(_SC_NPROCESSORS_ONLN));	// rav1e only runs tiles in parallel (0.55 -> 2 fps at 720p on Orin Nano)
+				gst_add_property(ss, encoder, "tiles", sysconf(_SC_NPROCESSORS_ONLN));	// rav1e only runs tiles in parallel (~4x faster at 720p on Orin Nano)
 
 				if( mOptions.deviceType == videoOptions::DEVICE_IP )
 					gst_add_property(ss, encoder, "max-key-frame-interval", keyframeInterval);

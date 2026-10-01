@@ -3,8 +3,8 @@
 # in realtime on boards without NVENC like Orin Nano (~40 fps at 720p). JetPack 6
 # doesn't have it (Ubuntu 22.04 has SVT-AV1 0.9, and svtav1enc is in gst-plugins-bad
 # 1.24+), so this builds SVT-AV1 and the svtav1enc plugin from GStreamer against the
-# installed GStreamer (1.20+), with a fix for low-delay mode, which deadlocks with
-# SVT-AV1 2.3+ in upstream GStreamer.
+# installed GStreamer (1.20+), with fixes for low-delay mode, which deadlocks with
+# SVT-AV1 2.3+ in upstream GStreamer and reports too much latency.
 #
 #   gst-svtav1                    # install to /usr/local and the system plugin dir (requires sudo)
 #   gst-svtav1 --user             # install to ~/.local and ~/.local/share/gstreamer-1.0/plugins

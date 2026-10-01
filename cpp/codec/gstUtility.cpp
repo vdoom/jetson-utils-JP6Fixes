@@ -564,7 +564,7 @@ static const char* gst_select_av1_decoder()
 static const char* gst_select_av1_encoder()
 {
 	// av1enc doesn't have its realtime mode (usage-profile) on older GStreamer like 1.20 - without it libaom runs
-	// its good-quality mode, which is ~10x slower than rav1enc (0.18 vs 2 fps at 720p on Orin Nano)
+	// its good-quality mode, which is much slower than rav1enc (0.18 vs 2-4.5 fps at 720p on Orin Nano)
 	static const char* realtime[]    = { "svtav1enc", "av1enc", "rav1enc", NULL };
 	static const char* no_realtime[] = { "svtav1enc", "rav1enc", "av1enc", NULL };
 
