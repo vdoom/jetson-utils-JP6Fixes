@@ -2,27 +2,43 @@
 # Builds and installs the rtpav1pay/rtpav1depay elements for AV1 over RTP/RTSP,
 # which come from the 'rtp' plugin of gst-plugins-rs and aren't in stock JetPack.
 # Optionally also builds rav1enc (--rav1e), a software AV1 encoder that is faster
-# than av1enc on GStreamer 1.20 (JetPack 6), where av1enc has no realtime mode.
+# than av1enc on GStreamer 1.20 (JetPack 6), where av1enc has no realtime mode, and
+# dav1ddec (--dav1d), a software AV1 decoder ~3-6x faster than av1dec, with the
+# libdav1d 1.3+ that it needs (JetPack 6 has 0.9).
 #
 #   gst-rtp-av1                 # install to the system plugin dir (requires sudo)
 #   gst-rtp-av1 --user          # install to ~/.local/share/gstreamer-1.0/plugins
 #   gst-rtp-av1 --user --rav1e  # also build rav1enc
 #   gst-rtp-av1 --plugin-dir DIR  # install somewhere else (add DIR to GST_PLUGIN_PATH)
+#   gst-rtp-av1 --user --dav1d  # also build dav1ddec (and libdav1d to ~/.local, or --prefix DIR)
 #
 # Rust is installed under the work dir (not ~/.cargo) if cargo is missing or too old.
 set -e
 
 VERSION="0.15.4"                   # gst-plugins-rs release, set with --version (0.15.x needs GStreamer 1.20)
 RUST_MIN="1.92"                    # rust-version of that release
+DAV1D_VERSION="1.5.4"              # libdav1d release for --dav1d
+PREFIX="/usr/local"                # where libdav1d goes, set with --prefix
 WORK_DIR="$HOME/.cache/gst-rtp-av1" # set with --work
 PLUGIN_DIR="$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null || true)"
 PACKAGES="-p gst-plugin-rtp"
 PLUGINS="libgstrsrtp.so"
+ELEMENTS="rtpav1pay rtpav1depay"
 
 while (( "$#" )); do
   case "$1" in
     --user)
+      PREFIX="$HOME/.local"
       PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gstreamer-1.0/plugins"
+      shift ;;
+    --prefix)
+      PREFIX="$2"
+      shift 2 ;;
+    --dav1d)
+      DAV1D=1
+      PACKAGES="$PACKAGES -p gst-plugin-dav1d"
+      PLUGINS="$PLUGINS libgstdav1d.so"
+      ELEMENTS="$ELEMENTS dav1ddec"
       shift ;;
     --plugin-dir)
       PLUGIN_DIR="$2"
@@ -30,6 +46,7 @@ while (( "$#" )); do
     --rav1e)
       PACKAGES="$PACKAGES -p gst-plugin-rav1e"
       PLUGINS="$PLUGINS libgstrav1e.so"
+      ELEMENTS="$ELEMENTS rav1enc"
       shift ;;
     --version)
       VERSION="$2"
@@ -38,7 +55,7 @@ while (( "$#" )); do
       WORK_DIR="$2"
       shift 2 ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       echo "unknown argument: $1" >&2
@@ -57,7 +74,41 @@ if [ -z "$PLUGIN_DIR" ]; then
   exit 1
 fi
 
+# the system dirs need sudo, the user ones don't
+sudo_for() {
+  local dir="$1"
+  while [ ! -d "$dir" ]; do dir="$(dirname "$dir")"; done
+  [ -w "$dir" ] || echo "sudo"
+}
+
 mkdir -p "$WORK_DIR"
+
+# dav1ddec needs libdav1d 1.3+, so build it and point the plugin at it
+if [ -n "$DAV1D" ]; then
+  for tool in meson ninja; do
+    if ! command -v $tool > /dev/null; then
+      echo "$tool is missing, install it with:  sudo apt-get install meson ninja-build" >&2
+      exit 1
+    fi
+  done
+
+  DAV1D_DIR="$WORK_DIR/dav1d-$DAV1D_VERSION"
+
+  if [ ! -d "$DAV1D_DIR" ]; then
+    git clone --depth 1 --branch "$DAV1D_VERSION" https://code.videolan.org/videolan/dav1d.git "$DAV1D_DIR"
+  fi
+
+  if [ ! -d "$DAV1D_DIR/build" ]; then
+    meson setup "$DAV1D_DIR/build" "$DAV1D_DIR" --prefix="$PREFIX" --libdir=lib --buildtype=release \
+          -Denable_tools=false -Denable_tests=false
+  fi
+
+  ninja -C "$DAV1D_DIR/build"
+  $(sudo_for "$PREFIX") ninja -C "$DAV1D_DIR/build" install
+
+  export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export RUSTFLAGS="-C link-arg=-Wl,-rpath,$PREFIX/lib"
+fi
 
 # use the installed Rust if it's new enough, otherwise install one under the work dir
 RUSTC_VERSION="$(rustc --version 2>/dev/null | awk '{print $2}')"
@@ -82,13 +133,7 @@ fi
 cd "$SRC_DIR"
 CARGO_PROFILE_RELEASE_DEBUG=false cargo build --release $PACKAGES
 
-# the system plugin dir needs sudo, the user one doesn't
-SUDO=""
-
-if [ ! -w "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
-  SUDO="sudo"
-fi
-
+SUDO="$(sudo_for "$PLUGIN_DIR")"
 $SUDO mkdir -p "$PLUGIN_DIR"
 
 for plugin in $PLUGINS; do
@@ -96,6 +141,6 @@ for plugin in $PLUGINS; do
   $SUDO cp "target/release/$plugin" "$PLUGIN_DIR/"
 done
 
-for element in rtpav1pay rtpav1depay; do
+for element in $ELEMENTS; do
   GST_PLUGIN_PATH="$PLUGIN_DIR${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}" gst-inspect-1.0 $element > /dev/null && echo "$element installed"
 done
