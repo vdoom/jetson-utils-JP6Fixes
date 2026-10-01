@@ -443,10 +443,20 @@ bool gstEncoder::buildLaunchStr()
 
 			if( mOptions.deviceType == videoOptions::DEVICE_IP )
 			{
-				ss << "key-int-max=15 ";			// send keyframes/I-frames more frequently for network streams
-
 				if( mOptions.codec == videoOptions::CODEC_H264 )
-					ss << "insert-vui=1 intra-refresh=true ";	// x265enc doesn't have these
+				{
+					// an IDR every second, so clients that join a running stream (a second RTSP client, or
+					// an RTP receiver started late) can start decoding - nvv4l2decoder can't start from intra
+					// refresh, and x264enc turns forced keyframes into an intra refresh.  The 200 ms VBV keeps
+					// the IDRs smaller than intra refresh's largest frames (57 vs 62 KB at 4 Mbps, 105 KB with
+					// the default 600 ms) so they don't overflow UDP buffers, at ~1 dB better quality.
+					ss << "key-int-max=" << (int)mOptions.frameRate << " vbv-buf-capacity=200 ";
+					ss << "insert-vui=1 ";	// x265enc doesn't have this
+				}
+				else
+				{
+					ss << "key-int-max=15 ";	// send keyframes/I-frames more frequently for network streams
+				}
 			}
 		}
 		else if( mOptions.codec == videoOptions::CODEC_AV1 )
