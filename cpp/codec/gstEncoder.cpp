@@ -734,13 +734,21 @@ bool gstEncoder::encodeYUV( void* buffer, size_t size )
 			gst_buffer_unref(gstBuffer);
 			break;
 		}
-		
-		LogError(LOG_GSTREAMER "gstEncoder -- an error occurred pushing appsrc buffer (result=%i '%s')\n", (int)ret, gst_flow_get_name(ret));
-		
+
 		// check to make sure the pipeline is still playing (some pipelines like RTSP server may disconnect)
 		GstState state = GST_STATE_VOID_PENDING;
 		gst_element_get_state(mPipeline, &state, NULL, GST_CLOCK_TIME_NONE);
-	
+
+		// the RTSP server stops the pipeline when the last client leaves, and starts it again when
+		// one connects, so drop the frames until then (restarting it here would loop forever)
+		if( mRTSPServer != NULL && state != GST_STATE_PLAYING )
+		{
+			gst_buffer_unref(gstBuffer);
+			return true;
+		}
+
+		LogError(LOG_GSTREAMER "gstEncoder -- an error occurred pushing appsrc buffer (result=%i '%s')\n", (int)ret, gst_flow_get_name(ret));
+
 		if( state != GST_STATE_PLAYING )
 		{
 			LogError(LOG_GSTREAMER "gstEncoder -- pipeline is in the '%s' state, restarting pipeline...\n", gst_element_state_get_name(state));

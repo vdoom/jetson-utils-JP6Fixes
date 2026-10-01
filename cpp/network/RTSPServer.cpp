@@ -244,9 +244,11 @@ static GstElement* gst_rtsp_media_factory_custom_element( GstRTSPMediaFactory* f
 // apply some additional settings on each GstRTSPMedia object
 static void gst_rtsp_media_factory_custom_configure( GstRTSPMediaFactory* factory, GstRTSPMedia* media, gpointer user_data )
 {
-	// the server prepares the media and starts it once the payloader is linked to its sinks - forcing it
-	// to PLAYING here raced with that, and frames queued in appsrc failed with not-linked (RTSP 503)
+	// keep the media prepared when the last client leaves, so the next client can play it again -
+	// but let the server start it, it links the payloader to its sinks first (forcing the pipeline
+	// to PLAYING here raced with that, and the frames queued in appsrc failed with not-linked: RTSP 503)
 	gst_rtsp_media_set_reusable(media, true);
+	gst_rtsp_media_prepare(media, NULL);
 }
 
     
