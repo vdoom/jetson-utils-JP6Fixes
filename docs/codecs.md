@@ -30,7 +30,7 @@ Orin Nano has no NVENC, so `--output-encoder=v4l2` falls back to the CPU encoder
 
 Fixed what the Orin Nano tests turned up:
 
-* fixed: RTSP output failed with 503 for every client on JetPack 6 (also before the AV1 changes) - the encoder pipeline was started before the RTSP server linked the payloader, and the frames queued in the leaky `appsrc` failed with not-linked. Now the RTSP server starts the pipeline, both in `gstEncoder::Open()` and in the `media-configure` callback
+* fixed: RTSP output failed with 503 for every client on JetPack 6 (also before the AV1 changes) - the encoder pipeline was started before the RTSP server linked the payloader, and the frames queued in the leaky `appsrc` failed with not-linked. Now the RTSP server starts the pipeline, both in `gstEncoder::Open()` and in the `media-configure` callback (which still prepares the media, so it stays prepared for the next client), and while no client is connected the frames are dropped
 * fixed: AV1 files were empty - `av1enc cpu-used=8` is out of range on GStreamer 1.20 (0-5), so libaom ran at `cpu-used=0` (< 0.05 fps at 720p), and `gstEncoder::Close()` only waited 1 s after EOS. `Close()` now waits for the EOS on the bus (up to 30 s for files, 1 s for network streams)
 * fixed: `rav1enc` ran on one core - it only runs tiles in parallel, so it now gets a tile and a thread per CPU
 * fixed: AV1 hardware decoding failed for files (not-negotiated) and RTP/RTSP (couldn't link) - `nvv4l2decoder` only takes `alignment=frame`, so it now gets `av1parse ! video/x-av1,alignment=tu ! av1parse`. The TU step is needed because `av1parse` on GStreamer 1.20 merges pairs of frames when it converts the OBU-aligned `rtpav1depay` output to frames directly
@@ -107,6 +107,9 @@ Streaming with `video-viewer` (after the fixes above), 300 frames, to an indepen
 | H.265, `cpu` and `v4l2`, `rtp://`                             | 112 frames (x265 is too slow, `appsrc` drops the rest) |
 | H.264, `rtsp://`, client at the start / ~3 s late             | 300 / 218 frames (0 before the RTSP fix)              |
 | H.265, `rtsp://`, client at the start / ~3 s late             | 113 / 86 frames                                       |
+| `rtsp://`, two clients (at the start + ~3 s late), H.265 / AV1 | 111 + 81 / 300 + 207 frames                          |
+| `rtsp://`, a client connects 2 s after another one left, H.265 / AV1 | 37 / 145 frames                                 |
+| H.264 `rtsp://`, a client joining a stream that's already running | 0 frames with `nvv4l2decoder`, 219 with FFmpeg (see Phase 5) |
 | `--output-encoder=v4l2` / `nvenc`                             | both fall back to the CPU encoder                     |
 | AV1 (`svtav1enc`, low delay) 720p to `rtp://`                 | 298 frames (13 before the `svtav1enc` latency fix)    |
 | AV1 (`svtav1enc`, low delay) 720p to `rtsp://`, client at the start / ~5 s late | 300 / 155 frames                    |
@@ -159,6 +162,7 @@ Done when:
 * discovering an AV1 file on Xavier and older crashes inside `nvv4l2decoder` - skip it for AV1 on those SoCs
 * on GStreamer 1.16 (no leaky `appsrc`) the input queue has no limit, since the `mNeedData` check in `encodeYUV()` is commented out - decide whether to re-enable it there
 * UDP receive buffer: document raising it on receivers of AV1 over RTP (`sudo sysctl -w net.core.rmem_max=4194304`) - not tested, it needs root
+* H.264 clients that join a stream that's already running (a second RTSP client, or an RTP receiver started late) don't decode with `nvv4l2decoder`: `x264enc` uses `intra-refresh=true` (from "Fix for UDP RTP/RTSP stream freezes"), so there's no IDR after the first frame. FFmpeg decodes them from the intra refresh. Decide whether to also send periodic IDRs, or let RTSP clients ask for one
 * every RTP output logs "Pipeline construction is invalid, please add queues" from `udpsink`: the encoder's reported latency isn't covered upstream, since `appsrc` and the encoder run in one streaming thread up to the sink. It's harmless with x264, but it's why `svtav1enc`'s 1.25 s latency report dropped frames - check whether a `queue` before the payloader should be added for all encoders
 
 ### Phase 6 - tuning and options
