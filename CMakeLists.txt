@@ -113,14 +113,41 @@ if(ENABLE_NVMM)
 	add_definitions(-DENABLE_NVMM)
 endif()
 
+# the WebRTC server has to use the libsoup that libnice (which webrtcbin loads) uses, because libsoup 2 and 3
+# abort when they're loaded in the same process - Ubuntu 24.04 (JetPack 7) builds libnice with libsoup 3
+find_library(NICE_LIBRARY NAMES nice libnice.so.10)
+set(SOUP_INCLUDE_DIRS /usr/include/libsoup-2.4)
+set(SOUP_LIBRARIES soup-2.4)
+
+if(NICE_LIBRARY)
+	execute_process(COMMAND ldd ${NICE_LIBRARY} OUTPUT_VARIABLE NICE_DEPENDENCIES ERROR_QUIET)
+
+	if(NICE_DEPENDENCIES MATCHES "libsoup-3\\.0")
+		find_package(PkgConfig QUIET)
+
+		if(PKG_CONFIG_FOUND)
+			pkg_check_modules(SOUP3 QUIET libsoup-3.0)
+		endif()
+
+		if(SOUP3_FOUND)
+			set(SOUP_INCLUDE_DIRS ${SOUP3_INCLUDE_DIRS})
+			set(SOUP_LIBRARIES ${SOUP3_LINK_LIBRARIES})
+		else()
+			message(WARNING "libnice uses libsoup 3, but libsoup-3.0-dev isn't installed - WebRTC streams will abort when a client connects (sudo apt-get install libsoup-3.0-dev)")
+		endif()
+	endif()
+endif()
+
+message("-- libsoup:  ${SOUP_LIBRARIES}")
+
 # additional paths for includes and libraries
 include_directories(${PROJECT_INCLUDE_DIR}/jetson-utils)
 
 include_directories(
-	/usr/include/gstreamer-1.0 
-	/usr/include/libxml2  /usr/include/libsoup-2.4 
+	/usr/include/gstreamer-1.0
+	/usr/include/libxml2  ${SOUP_INCLUDE_DIRS}
 	/usr/include/glib-2.0 /usr/include/json-glib-1.0
-	/usr/lib/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/gstreamer-1.0/include 
+	/usr/lib/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/gstreamer-1.0/include
 	/usr/lib/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/glib-2.0/include/
 )
 
@@ -139,8 +166,8 @@ target_link_libraries( jetson-utils
 	GL GLU GLEW ${CUDA_nppicc_LIBRARY}
 	gstreamer-1.0 gstapp-1.0 gstpbutils-1.0 
 	gstwebrtc-1.0 gstsdp-1.0 gstrtspserver-1.0 
-	json-glib-1.0 soup-2.4
-)	
+	json-glib-1.0 ${SOUP_LIBRARIES}
+)
 
 if(NVBUF_UTILS)
 	target_link_libraries(jetson-utils nvbuf_utils)

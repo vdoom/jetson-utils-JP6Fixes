@@ -31,6 +31,35 @@
 #include <sstream>
 
 
+// libsoup 3 (JetPack 7) replaced the server's SoupMessage and SoupClientContext with SoupServerMessage
+#if SOUP_MAJOR_VERSION >= 3
+typedef SoupServerMessage SoupHttpMessage;
+
+static void soupSetStatus( SoupServerMessage* message, guint status )	{ soup_server_message_set_status(message, status, NULL); }
+static const char* soupGetMethod( SoupServerMessage* message )			{ return soup_server_message_get_method(message); }
+#else
+typedef SoupMessage SoupHttpMessage;
+
+static void soupSetStatus( SoupMessage* message, guint status )		{ soup_message_set_status(message, status); }
+static const char* soupGetMethod( SoupMessage* message )				{ return message->method; }
+#endif
+
+// reply with a copy of the body and status 200
+static void soupSetResponse( SoupHttpMessage* message, const char* content_type, const char* body, size_t length )
+{
+#if SOUP_MAJOR_VERSION >= 3
+	soup_server_message_set_response(message, content_type, SOUP_MEMORY_COPY, body, length);
+#else
+	SoupBuffer* soup_buffer = soup_buffer_new(SOUP_MEMORY_COPY, body, length);
+
+	soup_message_headers_set_content_type(message->response_headers, content_type, NULL);
+	soup_message_body_append_buffer(message->response_body, soup_buffer);
+	soup_buffer_free(soup_buffer);
+#endif
+	soupSetStatus(message, SOUP_STATUS_OK);
+}
+
+
 // 'video': { width: { ideal: 1280 }, height: { ideal: 720 } }
 // HTML outgoing video viewer page template (for server->client)
 //  string params:
@@ -455,7 +484,7 @@ WebRTCServer* WebRTCServer::Create( uint16_t port, const char* stun_server, cons
 bool WebRTCServer::init()
 {
 	// create the soup server
-	mSoupServer = soup_server_new(SOUP_SERVER_SERVER_HEADER, "webrtc-server", NULL);
+	mSoupServer = soup_server_new("server-header", "webrtc-server", NULL);
 	
 	if( !mSoupServer )
 	{
@@ -467,8 +496,19 @@ bool WebRTCServer::init()
 	if( mSSLCertFile.length() > 0 && mSSLKeyFile.length() > 0 )
 	{
 		GError* error = NULL;
-		
+
+	#if SOUP_MAJOR_VERSION >= 3
+		GTlsCertificate* certificate = g_tls_certificate_new_from_files(mSSLCertFile.c_str(), mSSLKeyFile.c_str(), &error);
+
+		if( certificate != NULL )
+		{
+			soup_server_set_tls_certificate(mSoupServer, certificate);
+			g_object_unref(certificate);
+		}
+		else
+	#else
 		if( !soup_server_set_ssl_cert_file(mSoupServer, mSSLCertFile.c_str(), mSSLKeyFile.c_str(), &error) )
+	#endif
 		{
 			LogError(LOG_WEBRTC "failed to load SSL certificate, unable to use HTTPS\n");
 			LogError(LOG_WEBRTC "(%s)\n", error->message);
@@ -658,16 +698,26 @@ void WebRTCServer::freeRoute( WebRTCServer::WebsocketRoute* route )
 
 
 // onHttpRequest
+#if SOUP_MAJOR_VERSION >= 3
+void WebRTCServer::onHttpRequest( SoupServer* soup_server, SoupServerMessage* message, const char* path, GHashTable* query, void* user_data )
+#else
 void WebRTCServer::onHttpRequest( SoupServer* soup_server, SoupMessage* message, const char* path, GHashTable* query, SoupClientContext* client_context, void* user_data )
+#endif
 {
 	WebRTCServer* server = (WebRTCServer*)user_data;
 	
 	if( !server )
 	{
-		soup_message_set_status(message, SOUP_STATUS_INTERNAL_SERVER_ERROR);
+		soupSetStatus(message, SOUP_STATUS_INTERNAL_SERVER_ERROR);
 		return;
 	}
 	
+#if SOUP_MAJOR_VERSION >= 3
+	const char* remote_host = soup_server_message_get_remote_host(message);
+#else
+	const char* remote_host = soup_client_context_get_host(client_context);
+#endif
+
 	// find if path is found
 	HttpRoute* route = server->findHttpRoute(path);
 	
@@ -679,26 +729,34 @@ void WebRTCServer::onHttpRequest( SoupServer* soup_server, SoupMessage* message,
 
 	if( !route )
 	{
-		LogVerbose(LOG_WEBRTC "%s %s %s '%s' -- not found 404\n", server->HasHTTPS() ? "HTTPS" : "HTTP", soup_client_context_get_host(client_context), message->method, path);
-		soup_message_set_status(message, SOUP_STATUS_NOT_FOUND);
+		LogVerbose(LOG_WEBRTC "%s %s %s '%s' -- not found 404\n", server->HasHTTPS() ? "HTTPS" : "HTTP", remote_host, soupGetMethod(message), path);
+		soupSetStatus(message, SOUP_STATUS_NOT_FOUND);
 		return;
 	}
 	
-	LogVerbose(LOG_WEBRTC "%s %s %s '%s'\n", server->HasHTTPS() ? "HTTPS" : "HTTP", soup_client_context_get_host(client_context), message->method, path);
+	LogVerbose(LOG_WEBRTC "%s %s %s '%s'\n", server->HasHTTPS() ? "HTTPS" : "HTTP", remote_host, soupGetMethod(message), path);
 	
 	// dispatch callback
+#if SOUP_MAJOR_VERSION >= 3
+	route->callback(soup_server, message, path, query, route->user_data);
+#else
 	route->callback(soup_server, message, path, query, client_context, route->user_data);
+#endif
 }
 
 	
 // onHttpDefault (this serves the default site)
+#if SOUP_MAJOR_VERSION >= 3
+void WebRTCServer::onHttpDefault( SoupServer* soup_server, SoupServerMessage* message, const char* path, GHashTable* query, void* user_data )
+#else
 void WebRTCServer::onHttpDefault( SoupServer* soup_server, SoupMessage* message, const char* path, GHashTable* query, SoupClientContext* client_context, void* user_data )
+#endif
 {
 	WebRTCServer* server = (WebRTCServer*)user_data;
 	
 	if( !server )
 	{
-		soup_message_set_status(message, SOUP_STATUS_INTERNAL_SERVER_ERROR);
+		soupSetStatus(message, SOUP_STATUS_INTERNAL_SERVER_ERROR);
 		return;
 	}
 	
@@ -739,13 +797,7 @@ void WebRTCServer::onHttpDefault( SoupServer* soup_server, SoupMessage* message,
 		const std::string json_str = json.dump(2);
 		
 		// reply with the JSON
-		SoupBuffer* soup_buffer = soup_buffer_new(SOUP_MEMORY_COPY, json_str.c_str(), json_str.length()); // SOUP_MEMORY_STATIC
-
-		soup_message_headers_set_content_type(message->response_headers, "application/json", NULL);
-		soup_message_body_append_buffer(message->response_body, soup_buffer);
-		soup_buffer_free(soup_buffer);
-
-		soup_message_set_status(message, SOUP_STATUS_OK);
+		soupSetResponse(message, "application/json", json_str.c_str(), json_str.length());
 		return;
 	}
 
@@ -756,7 +808,7 @@ void WebRTCServer::onHttpDefault( SoupServer* soup_server, SoupMessage* message,
 		const int chars_needed = x; \
 		if( chars_needed < 0 || chars_needed >= sizeof(html) ) { \
 			LogError(LOG_WEBRTC "buffer length exceeded rendering html template (%i vs %zu bytes)\n", chars_needed, sizeof(html)); \
-			soup_message_set_status(message, SOUP_STATUS_INTERNAL_SERVER_ERROR); \
+			soupSetStatus(message, SOUP_STATUS_INTERNAL_SERVER_ERROR); \
 			return; \
 		}
 				
@@ -838,13 +890,7 @@ void WebRTCServer::onHttpDefault( SoupServer* soup_server, SoupMessage* message,
 	}
 
 	// reply with the HTML content
-	SoupBuffer* soup_buffer = soup_buffer_new(SOUP_MEMORY_COPY, html, strlen(html)); // SOUP_MEMORY_STATIC
-
-	soup_message_headers_set_content_type(message->response_headers, "text/html", NULL);
-	soup_message_body_append_buffer(message->response_body, soup_buffer);
-	soup_buffer_free(soup_buffer);
-
-	soup_message_set_status(message, SOUP_STATUS_OK);
+	soupSetResponse(message, "text/html", html, strlen(html));
 }
 
 
@@ -878,14 +924,23 @@ std::string WebRTCServer::printRouteInfo( WebsocketRoute* route ) const
 
 
 // onWebsocketOpened
+#if SOUP_MAJOR_VERSION >= 3
+void WebRTCServer::onWebsocketOpened( SoupServer* soup_server, SoupServerMessage* message, const char *path, SoupWebsocketConnection* connection, void* user_data )
+#else
 void WebRTCServer::onWebsocketOpened( SoupServer* soup_server, SoupWebsocketConnection* connection, const char *path, SoupClientContext* client_context, void* user_data )
+#endif
 {	
 	WebRTCServer* server = (WebRTCServer*)user_data;
 	
 	if( !server )
 		return;
 	
+#if SOUP_MAJOR_VERSION >= 3
+	const char* ip_address = soup_server_message_get_remote_host(message);
+	void* client_context = NULL;
+#else
 	const char* ip_address = soup_client_context_get_host(client_context);
+#endif
 	LogInfo(LOG_WEBRTC "websocket %s -- new connection opened by %s (peer_id=%u)\n", path, ip_address, server->mPeerCount);
 	
 	// lookup the route using the path the websocket connected on

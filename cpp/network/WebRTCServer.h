@@ -85,7 +85,11 @@ enum WebRTCFlags
 struct WebRTCPeer
 {
 	SoupWebsocketConnection* connection;
+#if SOUP_MAJOR_VERSION >= 3
+	void* client_context;	// libsoup 3 doesn't have SoupClientContext, this is always NULL
+#else
 	SoupClientContext* client_context;
+#endif
 	WebRTCServer* server;
 
 	uint32_t ID;		 	// unique ID
@@ -204,10 +208,19 @@ protected:
 
 	static void* runThread( void* user_data );
 	
+#if SOUP_MAJOR_VERSION >= 3
+	static void onHttpRequest( SoupServer* soup_server, SoupServerMessage* message, const char* path, GHashTable* query, void* user_data );
+	static void onHttpDefault( SoupServer* soup_server, SoupServerMessage* message, const char* path, GHashTable* query, void* user_data );
+#else
 	static void onHttpRequest( SoupServer* soup_server, SoupMessage* message, const char* path, GHashTable* query, SoupClientContext* client_context, void* user_data );
 	static void onHttpDefault( SoupServer* soup_server, SoupMessage* message, const char* path, GHashTable* query, SoupClientContext* client_context, void* user_data );
+#endif
 	
+#if SOUP_MAJOR_VERSION >= 3
+	static void onWebsocketOpened( SoupServer* server, SoupServerMessage* message, const char *path, SoupWebsocketConnection* connection, void* user_data );
+#else
 	static void onWebsocketOpened( SoupServer* server, SoupWebsocketConnection* connection, const char *path, SoupClientContext* client_context, void* user_data );
+#endif
 	static void onWebsocketMessage( SoupWebsocketConnection* connection, SoupWebsocketDataType data_type, GBytes* message, void* user_data );
 	static void onWebsocketClosed( SoupWebsocketConnection* connection, void* user_data );
 	
