@@ -634,6 +634,12 @@ bool gstEncoder::buildLaunchStr()
 				ss << "port=" << uri.port;
 
 			ss << " auto-multicast=true";
+
+			// appsrc and the encoder run in one thread up to the sink, so udpsink can't get its default 20 ms
+			// processing deadline and warns "please add queues" before going without it.  A queue would give
+			// it the deadline, but then it holds every packet for it (+17 ms with x264enc, +45 ms with svtav1enc)
+			if( gst_element_has_property("udpsink", "processing-deadline") )
+				ss << " processing-deadline=0";
 		}
 		else if( uri.protocol == "webrtc" )
 		{
