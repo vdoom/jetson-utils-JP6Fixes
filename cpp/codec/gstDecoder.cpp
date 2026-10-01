@@ -501,6 +501,17 @@ bool gstDecoder::discover()
 }
 
 
+// after packet loss, drop the AV1 stream until the next keyframe - av1dec fails the
+// whole pipeline on a broken frame (wait-for-keyframe is off by default in rtpav1depay)
+static std::string gst_rtpav1depay_str()
+{
+	if( gst_element_has_property("rtpav1depay", "wait-for-keyframe") )
+		return "rtpav1depay wait-for-keyframe=true ! ";
+
+	return "rtpav1depay ! ";
+}
+
+
 // buildLaunchStr
 bool gstDecoder::buildLaunchStr()
 {
@@ -538,8 +549,15 @@ bool gstDecoder::buildLaunchStr()
 		parser = "h264parse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_H265 )
 		parser = "h265parse ! ";
-	else if( mOptions.codec == videoOptions::CODEC_AV1 && mOptions.codecType != videoOptions::CODEC_V4L2 && gst_element_exists("av1parse") )
-		parser = "av1parse ! ";	// requires GStreamer 1.20 (nvv4l2decoder gets the demuxed/depayloaded stream directly)
+	else if( mOptions.codec == videoOptions::CODEC_AV1 && gst_element_exists("av1parse") )
+	{
+		// nvv4l2decoder only takes alignment=frame, and av1parse on GStreamer 1.20 merges frames when it converts
+		// the OBU-aligned rtpav1depay output to frames directly, so parse it to temporal units first
+		if( mOptions.codecType == videoOptions::CODEC_V4L2 )
+			parser = "av1parse ! video/x-av1,alignment=tu ! av1parse ! ";
+		else
+			parser = "av1parse ! ";	// requires GStreamer 1.20
+	}
 	else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 		parser = "mpegvideoparse ! ";
 	else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
@@ -617,7 +635,7 @@ bool gstDecoder::buildLaunchStr()
 		else if( mOptions.codec == videoOptions::CODEC_VP9 )
 			ss << "VP9\" ! rtpvp9depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_AV1 )
-			ss << "AV1\" ! rtpav1depay ! ";
+			ss << "AV1\" ! " << gst_rtpav1depay_str();
 		else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 			ss << "MP2T\" ! rtpmp2tdepay ! ";		// MP2T-ES
 		else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
@@ -625,8 +643,8 @@ bool gstDecoder::buildLaunchStr()
 		else if( mOptions.codec == videoOptions::CODEC_MJPEG )
 			ss << "JPEG\" ! rtpjpegdepay ! ";
 
-		if( mOptions.codecType != videoOptions::CODEC_V4L2 )
-			ss << parser;
+		if( mOptions.codecType != videoOptions::CODEC_V4L2 || mOptions.codec == videoOptions::CODEC_AV1 )
+			ss << parser;	// nvv4l2decoder can't take the OBU-aligned AV1 from rtpav1depay
 	}
 	else if( uri.protocol == "rtsp" || uri.protocol == "webrtc" )
 	{
@@ -654,7 +672,7 @@ bool gstDecoder::buildLaunchStr()
 		else if( mOptions.codec == videoOptions::CODEC_VP9 )
 			ss << "rtpvp9depay ! ";
 		else if( mOptions.codec == videoOptions::CODEC_AV1 )
-			ss << "rtpav1depay ! ";
+			ss << gst_rtpav1depay_str();
 		else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
 			ss << "rtpmp2tdepay ! ";		// MP2T-ES
 		else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
@@ -662,8 +680,8 @@ bool gstDecoder::buildLaunchStr()
 		else if( mOptions.codec == videoOptions::CODEC_MJPEG )
 			ss << "rtpjpegdepay ! ";
 
-		if( mOptions.codecType != videoOptions::CODEC_V4L2 )
-			ss << parser;
+		if( mOptions.codecType != videoOptions::CODEC_V4L2 || mOptions.codec == videoOptions::CODEC_AV1 )
+			ss << parser;	// nvv4l2decoder can't take the OBU-aligned AV1 from rtpav1depay
 	}
 	else
 	{
