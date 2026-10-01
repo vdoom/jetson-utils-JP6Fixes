@@ -44,6 +44,7 @@ while (( "$#" )); do
       PLUGIN_DIR="$2"
       shift 2 ;;
     --rav1e)
+      RAV1E=1
       PACKAGES="$PACKAGES -p gst-plugin-rav1e"
       PLUGINS="$PLUGINS libgstrav1e.so"
       ELEMENTS="$ELEMENTS rav1enc"
@@ -131,6 +132,36 @@ if [ ! -d "$SRC_DIR" ]; then
 fi
 
 cd "$SRC_DIR"
+
+# rav1enc gives rav1e the frame rate as its time base, which is the frame duration, so
+# rav1e's rate control gives every frame 30x the bits (61 Mbps for 4 Mbps at 720p)
+RAV1E_PATCH="$(cat <<'EOF'
+--- a/video/rav1e/src/rav1enc/imp.rs
++++ b/video/rav1e/src/rav1enc/imp.rs
+@@ -755,13 +755,14 @@ impl VideoEncoderImpl for Rav1Enc {
+                     }
+                 },
+                 speed_settings: config::SpeedSettings::from_preset(settings.speed_preset as u8),
++                // the time base is the duration of a frame (1/fps), not the frame rate
+                 time_base: if video_info.fps() != gst::Fraction::new(0, 1) {
+                     data::Rational {
+-                        num: video_info.fps().numer() as u64,
+-                        den: video_info.fps().denom() as u64,
++                        num: video_info.fps().denom() as u64,
++                        den: video_info.fps().numer() as u64,
+                     }
+                 } else {
+-                    data::Rational { num: 30, den: 1 }
++                    data::Rational { num: 1, den: 30 }
+                 },
+                 low_latency: settings.low_latency,
+                 min_key_frame_interval: settings.min_key_frame_interval,
+EOF
+)"
+
+if [ -n "$RAV1E" ] && echo "$RAV1E_PATCH" | git apply --check 2> /dev/null; then
+  echo "$RAV1E_PATCH" | git apply
+fi
 CARGO_PROFILE_RELEASE_DEBUG=false cargo build --release $PACKAGES
 
 SUDO="$(sudo_for "$PLUGIN_DIR")"
