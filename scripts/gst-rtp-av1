@@ -3,14 +3,15 @@
 # which come from the 'rtp' plugin of gst-plugins-rs and aren't in stock JetPack.
 # Optionally also builds rav1enc (--rav1e), a software AV1 encoder that is faster
 # than av1enc on GStreamer 1.20 (JetPack 6), where av1enc has no realtime mode, and
-# dav1ddec (--dav1d), a software AV1 decoder ~3-6x faster than av1dec, with the
-# libdav1d 1.3+ that it needs (JetPack 6 has 0.9).
+# dav1ddec (--dav1d), a software AV1 decoder ~3-6x faster than av1dec, which needs
+# libdav1d 1.3+ - JetPack 7 has 1.4, JetPack 6 has 0.9, so there it's built too.
 #
 #   gst-rtp-av1                 # install to the system plugin dir (requires sudo)
 #   gst-rtp-av1 --user          # install to ~/.local/share/gstreamer-1.0/plugins
 #   gst-rtp-av1 --user --rav1e  # also build rav1enc
 #   gst-rtp-av1 --plugin-dir DIR  # install somewhere else (add DIR to GST_PLUGIN_PATH)
-#   gst-rtp-av1 --user --dav1d  # also build dav1ddec (and libdav1d to ~/.local, or --prefix DIR)
+#   gst-rtp-av1 --user --dav1d  # also build dav1ddec (and libdav1d to ~/.local, or --prefix DIR,
+#                               # when the installed one is older than 1.3)
 #
 # Rust is installed under the work dir (not ~/.cargo) if cargo is missing or too old.
 set -e
@@ -84,8 +85,10 @@ sudo_for() {
 
 mkdir -p "$WORK_DIR"
 
-# dav1ddec needs libdav1d 1.3+, so build it and point the plugin at it
-if [ -n "$DAV1D" ]; then
+# dav1ddec needs libdav1d 1.3+, so build it and point the plugin at it if the installed one is older
+if [ -n "$DAV1D" ] && pkg-config --exists 'dav1d >= 1.3'; then
+  echo "using the installed libdav1d $(pkg-config --modversion dav1d)"
+elif [ -n "$DAV1D" ]; then
   for tool in meson ninja; do
     if ! command -v $tool > /dev/null; then
       echo "$tool is missing, install it with:  sudo apt-get install meson ninja-build" >&2
