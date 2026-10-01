@@ -732,17 +732,18 @@ bool gstEncoder::encodeYUV( void* buffer, size_t size )
 			return false;
 	}
 
-	// check to see if data can be accepted
-	// 20240307 - disabled for WebRTC which can get stuck in 'pipeline full' state;
-	// re-enabled for non-WebRTC pipelines so the appsrc queue doesn't grow unbounded under saturation
-/*	if( !mNeedData && mWebRTCServer == NULL )
+	// check to see if data can be accepted - only needed before GStreamer 1.20, newer appsrc drops the
+	// oldest frames itself when its queue is full (leaky-type), older ones queue them without a limit
+	// 20240307 - disabled for WebRTC which can get stuck in 'pipeline full' state
+	static const bool leakyAppsrc = gst_element_has_property("appsrc", "leaky-type");
+
+	if( !leakyAppsrc && !mNeedData && mWebRTCServer == NULL )
 	{
 		if( mOptions.frameCount % 25 == 0 )
 			LogVerbose(LOG_GSTREAMER "gstEncoder -- pipeline full, skipping frame %zu (%ux%u, %zu bytes)\n", mOptions.frameCount, mOptions.width, mOptions.height, size);
 
 		return true;
 	}
-*/
 	// construct the buffer caps for this size image
 	if( !mBufferCaps )
 	{
