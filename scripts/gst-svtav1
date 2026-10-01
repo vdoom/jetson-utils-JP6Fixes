@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Builds and installs svtav1enc (SVT-AV1), the only software AV1 encoder that runs
+# in realtime on boards without NVENC like Orin Nano (~40 fps at 720p). JetPack 6
+# doesn't have it (Ubuntu 22.04 has SVT-AV1 0.9, and svtav1enc is in gst-plugins-bad
+# 1.24+), so this builds SVT-AV1 and the svtav1enc plugin from GStreamer against the
+# installed GStreamer (1.20+), with a fix for low-delay mode, which deadlocks with
+# SVT-AV1 2.3+ in upstream GStreamer.
+#
+#   gst-svtav1                    # install to /usr/local and the system plugin dir (requires sudo)
+#   gst-svtav1 --user             # install to ~/.local and ~/.local/share/gstreamer-1.0/plugins
+#   gst-svtav1 --prefix DIR --plugin-dir DIR  # install somewhere else (add DIR to GST_PLUGIN_PATH)
+set -e
+
+SVT_VERSION="v4.2.0"                 # SVT-AV1 release
+GST_VERSION="1.28.7"                 # GStreamer release that the svtav1enc source comes from
+WORK_DIR="$HOME/.cache/gst-svtav1"   # set with --work
+PREFIX="/usr/local"                  # where libSvtAv1Enc goes, set with --prefix
+PLUGIN_DIR="$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null || true)"
+
+while (( "$#" )); do
+  case "$1" in
+    --user)
+      PREFIX="$HOME/.local"
+      PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gstreamer-1.0/plugins"
+      shift ;;
+    --prefix)
+      PREFIX="$2"
+      shift 2 ;;
+    --plugin-dir)
+      PLUGIN_DIR="$2"
+      shift 2 ;;
+    --work)
+      WORK_DIR="$2"
+      shift 2 ;;
+    -h|--help)
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 1 ;;
+  esac
+done
+
+for tool in cmake gcc git curl patch pkg-config; do
+  if ! command -v $tool > /dev/null; then
+    echo "$tool is missing, install it with:  sudo apt-get install $tool" >&2
+    exit 1
+  fi
+done
+
+if ! pkg-config --exists 'gstreamer-1.0 >= 1.20' gstreamer-base-1.0 gstreamer-video-1.0; then
+  echo "GStreamer 1.20+ development files are missing, install them with:" >&2
+  echo "  sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev" >&2
+  exit 1
+fi
+
+if [ -z "$PLUGIN_DIR" ]; then
+  echo "couldn't find the GStreamer plugin directory, use --user" >&2
+  exit 1
+fi
+
+# the system dirs need sudo, the user ones don't
+sudo_for() {
+  local dir="$1"
+  while [ ! -d "$dir" ]; do dir="$(dirname "$dir")"; done
+  [ -w "$dir" ] || echo "sudo"
+}
+
+mkdir -p "$WORK_DIR"
+
+# build SVT-AV1 (the encoder library only)
+SVT_DIR="$WORK_DIR/SVT-AV1-$SVT_VERSION"
+
+if [ ! -d "$SVT_DIR" ]; then
+  git clone --depth 1 --branch "$SVT_VERSION" https://gitlab.com/AOMediaCodec/SVT-AV1.git "$SVT_DIR"
+fi
+
+# (-flto=N runs the link-time optimization in parallel, it takes minutes serially)
+cmake -S "$SVT_DIR" -B "$SVT_DIR/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+      -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_DEC=OFF -DBUILD_APPS=OFF -DBUILD_TESTING=OFF \
+      -DCMAKE_SHARED_LINKER_FLAGS="-flto=$(nproc)"
+cmake --build "$SVT_DIR/build" -j$(nproc)
+$(sudo_for "$PREFIX") cmake --install "$SVT_DIR/build"
+
+# build the svtav1enc plugin from GStreamer's source, against the installed GStreamer
+PLUGIN_SRC="$WORK_DIR/svtav1enc-$GST_VERSION"
+mkdir -p "$PLUGIN_SRC"
+cd "$PLUGIN_SRC"
+
+for file in gstsvtav1enc.c gstsvtav1enc.h; do
+  curl -sSf -o $file "https://gitlab.freedesktop.org/gstreamer/gstreamer/-/raw/$GST_VERSION/subprojects/gst-plugins-bad/ext/svtav1/$file"
+done
+
+# fixes for low-delay mode:
+#  - svt_av1_enc_get_packet() blocks until the next packet is ready (SVT-AV1 2.3+), and
+#    svtav1enc keeps calling it until the queue is empty, so it deadlocks after the first
+#    frame - only get one packet per picture
+#  - svtav1enc reports the random-access lookahead as latency (37 frames at 30 fps), so
+#    sinks that sync (like udpsink) hold every frame for 1.25 s - report one frame instead
+patch -p1 <<'EOF'
+--- a/gstsvtav1enc.c
++++ b/gstsvtav1enc.c
+@@ -940,6 +940,17 @@
+   return (ret != GST_FLOW_ERROR);
+ }
+ 
++/* low delay is pred-struct 1 in all SVT-AV1 versions, and rtc forces it */
++static gboolean
++gst_svtav1enc_low_delay (GstSvtAv1Enc * svtav1enc)
++{
++#if SVT_AV1_CHECK_VERSION(3, 1, 0)
++  if (svtav1enc->svt_config->rtc)
++    return TRUE;
++#endif
++  return svtav1enc->svt_config->pred_structure == 1;
++}
++
+ static GstFlowReturn
+ gst_svtav1enc_dequeue_encoded_frames (GstSvtAv1Enc * svtav1enc,
+     gboolean done_sending_pics, gboolean output_frames)
+@@ -1003,7 +1014,11 @@
+           gst_video_encoder_finish_frame (GST_VIDEO_ENCODER (svtav1enc), frame);
+     }
+ 
+-  } while (res == EB_ErrorNone && !encode_at_eos && ret == GST_FLOW_OK);
++    /* in low-delay mode svt_av1_enc_get_packet() blocks until the next packet
++     * is ready (SVT-AV1 2.3+), and each picture gives one packet, so only get
++     * one per picture until EOS - looping until the queue is empty deadlocks */
++  } while (res == EB_ErrorNone && !encode_at_eos && ret == GST_FLOW_OK
++      && (done_sending_pics || !gst_svtav1enc_low_delay (svtav1enc)));
+ 
+   return ret;
+ }
+@@ -1103,6 +1118,11 @@
+ 
+   min_latency_frames = ((fps * 5) >> 2);
+ 
++  /* low delay outputs each frame right away, the lookahead latency above would
++   * make sinks that sync hold every frame for over a second */
++  if (gst_svtav1enc_low_delay (svtav1enc))
++    min_latency_frames = 1;
++
+   gst_video_encoder_set_latency (encoder,
+       min_latency_frames * GST_SECOND /
+       (svtav1enc->svt_config->frame_rate_numerator /
+EOF
+
+# gstEncoder looks for "low-delay fix" in the package name to know that low delay is safe
+cat > config.h <<EOF
+#define PACKAGE "gst-plugins-bad"
+#define VERSION "$GST_VERSION"
+#define PACKAGE_NAME "GStreamer svtav1enc (gst-svtav1, low-delay fix)"
+#define GST_PACKAGE_NAME PACKAGE_NAME
+#define GST_PACKAGE_ORIGIN "https://gstreamer.freedesktop.org"
+EOF
+
+gcc -shared -fPIC -O2 -DGST_USE_UNSTABLE_API -I. gstsvtav1enc.c -o libgstsvtav1.so \
+    $(PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH" pkg-config --cflags --libs SvtAv1Enc gstreamer-1.0 gstreamer-base-1.0 gstreamer-video-1.0) \
+    -Wl,-rpath,"$PREFIX/lib" -lm
+
+SUDO="$(sudo_for "$PLUGIN_DIR")"
+$SUDO mkdir -p "$PLUGIN_DIR"
+echo "installing libgstsvtav1.so to $PLUGIN_DIR"
+$SUDO cp libgstsvtav1.so "$PLUGIN_DIR/"
+
+GST_PLUGIN_PATH="$PLUGIN_DIR${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}" gst-inspect-1.0 svtav1enc > /dev/null && echo "svtav1enc installed"
