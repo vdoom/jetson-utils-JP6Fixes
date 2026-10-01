@@ -321,6 +321,19 @@ gboolean gst_message_print(GstBus* bus, GstMessage* message, gpointer user_data)
 			//g_main_loop_quit (app->loop);
         		break;
 		}
+		case GST_MESSAGE_WARNING:
+		{
+			GError *err = NULL;
+			gchar *dbg_info = NULL;
+
+			gst_message_parse_warning (message, &err, &dbg_info);
+			LogVerbose(LOG_GSTREAMER "gstreamer %s WARNING %s\n", GST_OBJECT_NAME (message->src), err->message);
+			LogVerbose(LOG_GSTREAMER "gstreamer Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
+
+			g_error_free(err);
+			g_free(dbg_info);
+			break;
+		}
 		case GST_MESSAGE_EOS:
 		{
 			LogVerbose(LOG_GSTREAMER "gstreamer %s recieved EOS signal...\n", GST_OBJECT_NAME(message->src));
