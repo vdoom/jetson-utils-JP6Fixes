@@ -118,6 +118,14 @@ bool gst_element_property_range( const char* name, const char* property, int64_t
 const char* gst_svtav1_low_delay();
 
 /**
+ * gst_query_hw_av1
+ * Check if the hardware codecs support AV1 (Orin and newer).
+ * @internal
+ * @ingroup codec
+ */
+bool gst_query_hw_av1();
+
+/**
  * gst_select_decoder
  * @internal
  * @ingroup codec

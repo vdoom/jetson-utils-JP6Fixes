@@ -664,8 +664,8 @@ const char* gst_svtav1_low_delay()
 }
 
 
-// check if the hardware codecs support AV1 (Orin and newer)
-static bool gst_query_hw_av1()
+// gst_query_hw_av1
+bool gst_query_hw_av1()
 {
 #if defined(__aarch64__)
 	if( fileExists("/proc/device-tree/compatible") )

@@ -363,6 +363,33 @@ static GstDiscovererVideoInfo* findVideoStreamInfo( GstDiscovererStreamInfo* inf
 }
 
 
+// skip nvv4l2decoder for AV1 while discovering (GST_AUTOPLUG_SELECT_SKIP/TRY, the enum isn't in a public header)
+static int onDiscoverAutoplugSelect( GstElement* bin, GstPad* pad, GstCaps* caps, GstElementFactory* factory, gpointer user_data )
+{
+	const GstStructure* structure = gst_caps_get_structure(caps, 0);
+
+	if( structure != NULL && gst_structure_has_name(structure, "video/x-av1") && strcmp(GST_OBJECT_NAME(factory), "nvv4l2decoder") == 0 )
+		return 2;
+
+	return 0;
+}
+
+// the discoverer decodes with whatever decodebin picks, which is nvv4l2decoder even on SoCs that can't
+// decode AV1 in hardware, and it crashes there - so make its uridecodebin pass over it for AV1
+static void onDiscoverSourceSetup( GstDiscoverer* discoverer, GstElement* source, gpointer user_data )
+{
+	GstObject* uridecodebin = gst_object_get_parent(GST_OBJECT(source));
+
+	if( !uridecodebin )
+		return;
+
+	if( g_signal_lookup("autoplug-select", G_OBJECT_TYPE(uridecodebin)) != 0 )
+		g_signal_connect(uridecodebin, "autoplug-select", G_CALLBACK(onDiscoverAutoplugSelect), NULL);
+
+	gst_object_unref(uridecodebin);
+}
+
+
 // discover
 bool gstDecoder::discover()
 {
@@ -379,6 +406,9 @@ bool gstDecoder::discover()
 		LogError(LOG_GSTREAMER "gstDecoder -- failed to create gstreamer discovery instance:  %s\n", err->message);
 		return false;
 	}
+
+	if( !gst_query_hw_av1() )
+		g_signal_connect(discoverer, "source-setup", G_CALLBACK(onDiscoverSourceSetup), NULL);
 	
 	GstDiscovererInfo* info = gst_discoverer_discover_uri(discoverer,
                              mOptions.resource.string.c_str(), &err);
