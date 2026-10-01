@@ -536,6 +536,15 @@ bool gstEncoder::buildLaunchStr()
 					const uint64_t vbvSize = (uint64_t)(mOptions.bitRate * 3.0 / mOptions.frameRate);
 					ss << "vbv-size=" << vbvSize << " EnableTwopassCBR=true ";
 				}
+				else if( mOptions.codec == videoOptions::CODEC_AV1 )
+				{
+					// nvv4l2av1enc has no two-pass CBR, and a 3-frame VBV costs it ~2 dB (vs ~0.9 dB for H.264),
+					// so it gets 6 frames: at 4 Mbps that halves the IDRs (143 -> 71 KB on a static scene) for
+					// ~0.5 dB on a moving one.  It only sends the sequence header with the first frame unless
+					// asked to, and late clients need it (rtpav1pay re-inserts it, other payloaders may not).
+					gst_add_property(ss, encoder, "vbv-size", (uint64_t)(mOptions.bitRate * 6.0 / mOptions.frameRate));
+					gst_add_property(ss, encoder, "insert-seq-hdr", "true");
+				}
 			}
 		}
 		
