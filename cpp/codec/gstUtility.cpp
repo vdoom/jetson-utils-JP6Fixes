@@ -401,11 +401,15 @@ bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostring
 		return false;
 	}
 	
+	// the muxers take AV1 as a TU-aligned OBU stream, and nvv4l2av1enc doesn't say which format it outputs
+	// (av1parse requires GStreamer 1.20, the software encoders already output that format)
 	#define ADD_CODEC_PARSER() \
 		if( codec == videoOptions::CODEC_H264 ) \
 			pipeline << "h264parse ! "; \
 		else if( codec == videoOptions::CODEC_H265 ) \
-			pipeline << "h265parse ! ";
+			pipeline << "h265parse ! "; \
+		else if( codec == videoOptions::CODEC_AV1 && gst_element_exists("av1parse") ) \
+			pipeline << "av1parse ! ";
 		
 	if( uri.extension == "mkv" )
 	{
