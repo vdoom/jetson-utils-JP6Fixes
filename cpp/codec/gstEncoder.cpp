@@ -830,6 +830,15 @@ bool gstEncoder::Open()
 	if( mStreaming )
 		return true;
 
+	// the RTSP server owns the pipeline state - it links the payloader and starts the pipeline
+	// when a client connects, starting it here makes it fail with not-linked before that
+	if( mRTSPServer != NULL )
+	{
+		LogInfo(LOG_GSTREAMER "gstEncoder -- RTSP server will start the pipeline when a client connects\n");
+		mStreaming = true;
+		return true;
+	}
+
 	// transition pipline to STATE_PLAYING
 	LogInfo(LOG_GSTREAMER "gstEncoder -- starting pipeline, transitioning to GST_STATE_PLAYING\n");
 
