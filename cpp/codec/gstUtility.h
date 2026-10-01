@@ -101,6 +101,14 @@ bool gst_element_exists( const char* name );
 bool gst_element_has_property( const char* name, const char* property );
 
 /**
+ * gst_element_property_range
+ * Get the range of an integer property, returns false if the element doesn't have it or it isn't an integer.
+ * @internal
+ * @ingroup codec
+ */
+bool gst_element_property_range( const char* name, const char* property, int64_t* min, int64_t* max );
+
+/**
  * gst_select_decoder
  * @internal
  * @ingroup codec

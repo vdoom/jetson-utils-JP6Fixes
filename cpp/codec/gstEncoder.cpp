@@ -36,6 +36,9 @@
 #include <gst/webrtc/webrtc.h>
 #include <gst/app/gstappsrc.h>
 
+#include <algorithm>
+#include <type_traits>
+
 #include <sstream>
 #include <string.h>
 #include <strings.h>
@@ -307,12 +310,38 @@ bool gstEncoder::buildCapsStr()
 // append a property to the launch string only if the element has it, because the
 // properties vary between encoders and GStreamer versions, and an unknown one fails the pipeline
 template<typename T>
-static void gst_add_property( std::ostringstream& ss, const char* element, const char* property, const T& value )
+static typename std::enable_if<!std::is_integral<T>::value>::type gst_add_property( std::ostringstream& ss, const char* element, const char* property, const T& value )
 {
 	if( gst_element_has_property(element, property) )
 		ss << property << "=" << value << " ";
 	else
 		LogVerbose(LOG_GSTREAMER "gstEncoder -- %s doesn't have property '%s', skipping it\n", element, property);
+}
+
+// integer properties also get clamped to the range that the installed element accepts, because an
+// out-of-range value is ignored with a warning (av1enc cpu-used is 0-5 on GStreamer 1.20, so 8 left it at 0)
+template<typename T>
+static typename std::enable_if<std::is_integral<T>::value>::type gst_add_property( std::ostringstream& ss, const char* element, const char* property, const T& value )
+{
+	int64_t min = 0;
+	int64_t max = 0;
+
+	if( !gst_element_property_range(element, property, &min, &max) )
+	{
+		if( gst_element_has_property(element, property) )
+			ss << property << "=" << value << " ";
+		else
+			LogVerbose(LOG_GSTREAMER "gstEncoder -- %s doesn't have property '%s', skipping it\n", element, property);
+
+		return;
+	}
+
+	const int64_t clamped = std::min(std::max((int64_t)value, min), max);
+
+	if( clamped != (int64_t)value )
+		LogVerbose(LOG_GSTREAMER "gstEncoder -- %s %s=%lld is out of range (%lld-%lld), using %lld\n", element, property, (long long)value, (long long)min, (long long)max, (long long)clamped);
+
+	ss << property << "=" << clamped << " ";
 }
 
 
@@ -406,6 +435,8 @@ bool gstEncoder::buildLaunchStr()
 				gst_add_property(ss, encoder, "speed-preset", 10);	// 0 = best quality, 10 = fastest
 				gst_add_property(ss, encoder, "low-latency", "true");
 				gst_add_property(ss, encoder, "bitrate", mOptions.bitRate);	// bits
+				gst_add_property(ss, encoder, "threads", sysconf(_SC_NPROCESSORS_ONLN));
+				gst_add_property(ss, encoder, "tiles", sysconf(_SC_NPROCESSORS_ONLN));	// rav1e only runs tiles in parallel (0.55 -> 2 fps at 720p on Orin Nano)
 
 				if( mOptions.deviceType == videoOptions::DEVICE_IP )
 					gst_add_property(ss, encoder, "max-key-frame-interval", keyframeInterval);
@@ -891,7 +922,21 @@ void gstEncoder::Close()
 	if( eos_result != 0 )
 		LogError(LOG_GSTREAMER "gstEncoder -- failed sending appsrc EOS (result %u)\n", eos_result);
 
-	sleep(1);
+	// wait for the EOS to reach the sink, so slow encoders finish the queued frames and the muxer
+	// writes its headers (mp4 needs its moov atom) - RTSP pipelines run inside the server's pipeline,
+	// so their EOS doesn't arrive on this bus, and network streams don't need to wait long anyway
+	const GstClockTime eos_timeout = (mOptions.deviceType == videoOptions::DEVICE_FILE) ? 30 * GST_SECOND : GST_SECOND;
+	GstMessage* eos_msg = gst_bus_timed_pop_filtered(mBus, eos_timeout, (GstMessageType)(GST_MESSAGE_EOS|GST_MESSAGE_ERROR));
+
+	if( eos_msg != NULL )
+	{
+		gst_message_print(mBus, eos_msg, this);
+		gst_message_unref(eos_msg);
+	}
+	else if( mOptions.deviceType == videoOptions::DEVICE_FILE )
+	{
+		LogWarning(LOG_GSTREAMER "gstEncoder -- timed out waiting for EOS, %s may be incomplete\n", GetResource().location.c_str());
+	}
 
 	// stop pipeline
 	LogInfo(LOG_GSTREAMER "gstEncoder -- transitioning pipeline to GST_STATE_NULL\n");

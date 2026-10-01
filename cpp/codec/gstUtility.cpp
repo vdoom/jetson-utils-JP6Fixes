@@ -479,6 +479,45 @@ bool gst_element_has_property( const char* name, const char* property )
 }
 
 
+// gst_element_property_range
+bool gst_element_property_range( const char* name, const char* property, int64_t* min, int64_t* max )
+{
+	if( !name || !property || !min || !max )
+		return false;
+
+	GstElement* element = gst_element_factory_make(name, NULL);
+
+	if( !element )
+		return false;
+
+	GParamSpec* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(element), property);
+	bool found = true;
+
+	if( spec != NULL && G_IS_PARAM_SPEC_INT(spec) )
+	{
+		*min = G_PARAM_SPEC_INT(spec)->minimum;
+		*max = G_PARAM_SPEC_INT(spec)->maximum;
+	}
+	else if( spec != NULL && G_IS_PARAM_SPEC_UINT(spec) )
+	{
+		*min = G_PARAM_SPEC_UINT(spec)->minimum;
+		*max = G_PARAM_SPEC_UINT(spec)->maximum;
+	}
+	else if( spec != NULL && G_IS_PARAM_SPEC_INT64(spec) )
+	{
+		*min = G_PARAM_SPEC_INT64(spec)->minimum;
+		*max = G_PARAM_SPEC_INT64(spec)->maximum;
+	}
+	else
+	{
+		found = false;
+	}
+
+	gst_object_unref(element);
+	return found;
+}
+
+
 // return the first element from a NULL-terminated list that is installed
 static const char* gst_first_element( const char** names )
 {
@@ -508,8 +547,12 @@ static const char* gst_select_av1_decoder()
 // select a software AV1 encoder (in order of preference for realtime encoding speed)
 static const char* gst_select_av1_encoder()
 {
-	static const char* encoders[] = { "svtav1enc", "av1enc", "rav1enc", NULL };
-	const char* encoder = gst_first_element(encoders);
+	// av1enc doesn't have its realtime mode (usage-profile) on older GStreamer like 1.20 - without it libaom runs
+	// its good-quality mode, which is ~10x slower than rav1enc (0.18 vs 2 fps at 720p on Orin Nano)
+	static const char* realtime[]    = { "svtav1enc", "av1enc", "rav1enc", NULL };
+	static const char* no_realtime[] = { "svtav1enc", "rav1enc", "av1enc", NULL };
+
+	const char* encoder = gst_first_element(gst_element_has_property("av1enc", "usage-profile") ? realtime : no_realtime);
 
 	if( !encoder )
 		LogError(LOG_GSTREAMER "no AV1 software encoder found (svtav1enc, av1enc from gstreamer1.0-plugins-bad, or rav1enc from gst-plugins-rs)\n");
