@@ -82,7 +82,7 @@ int main( int argc, char** argv )
 	if( !input )
 	{
 		LogError("video-viewer:  failed to create input stream\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -94,7 +94,7 @@ int main( int argc, char** argv )
 	if( !output )
 	{
 		LogError("video-viewer:  failed to create output stream\n");
-		return 0;
+		return 1;
 	}
 	
 
