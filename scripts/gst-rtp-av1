@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Builds and installs the rtpav1pay/rtpav1depay elements for AV1 over RTP/RTSP,
+# which come from the 'rtp' plugin of gst-plugins-rs and aren't in stock JetPack.
+# Optionally also builds rav1enc (--rav1e), a software AV1 encoder that is faster
+# than av1enc on GStreamer 1.20 (JetPack 6), where av1enc has no realtime mode.
+#
+#   gst-rtp-av1                 # install to the system plugin dir (requires sudo)
+#   gst-rtp-av1 --user          # install to ~/.local/share/gstreamer-1.0/plugins
+#   gst-rtp-av1 --user --rav1e  # also build rav1enc
+#   gst-rtp-av1 --plugin-dir DIR  # install somewhere else (add DIR to GST_PLUGIN_PATH)
+#
+# Rust is installed under the work dir (not ~/.cargo) if cargo is missing or too old.
+set -e
+
+VERSION="0.15.4"                   # gst-plugins-rs release, set with --version (0.15.x needs GStreamer 1.20)
+RUST_MIN="1.92"                    # rust-version of that release
+WORK_DIR="$HOME/.cache/gst-rtp-av1" # set with --work
+PLUGIN_DIR="$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null || true)"
+PACKAGES="-p gst-plugin-rtp"
+PLUGINS="libgstrsrtp.so"
+
+while (( "$#" )); do
+  case "$1" in
+    --user)
+      PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gstreamer-1.0/plugins"
+      shift ;;
+    --plugin-dir)
+      PLUGIN_DIR="$2"
+      shift 2 ;;
+    --rav1e)
+      PACKAGES="$PACKAGES -p gst-plugin-rav1e"
+      PLUGINS="$PLUGINS libgstrav1e.so"
+      shift ;;
+    --version)
+      VERSION="$2"
+      shift 2 ;;
+    --work)
+      WORK_DIR="$2"
+      shift 2 ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 1 ;;
+  esac
+done
+
+if ! pkg-config --exists 'gstreamer-1.0 >= 1.20' gstreamer-rtp-1.0 gstreamer-video-1.0; then
+  echo "GStreamer 1.20+ development files are missing, install them with:" >&2
+  echo "  sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev" >&2
+  exit 1
+fi
+
+if [ -z "$PLUGIN_DIR" ]; then
+  echo "couldn't find the GStreamer plugin directory, use --user" >&2
+  exit 1
+fi
+
+mkdir -p "$WORK_DIR"
+
+# use the installed Rust if it's new enough, otherwise install one under the work dir
+RUSTC_VERSION="$(rustc --version 2>/dev/null | awk '{print $2}')"
+
+if [ -z "$RUSTC_VERSION" ] || [ "$(printf '%s\n' "$RUST_MIN" "$RUSTC_VERSION" | sort -V | head -1)" != "$RUST_MIN" ]; then
+  export RUSTUP_HOME="$WORK_DIR/rust/rustup"
+  export CARGO_HOME="$WORK_DIR/rust/cargo"
+  export PATH="$CARGO_HOME/bin:$PATH"
+
+  if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+    echo "installing Rust to $WORK_DIR/rust"
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable
+  fi
+fi
+
+SRC_DIR="$WORK_DIR/gst-plugins-rs-$VERSION"
+
+if [ ! -d "$SRC_DIR" ]; then
+  git clone --depth 1 --branch "$VERSION" https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs.git "$SRC_DIR"
+fi
+
+cd "$SRC_DIR"
+CARGO_PROFILE_RELEASE_DEBUG=false cargo build --release $PACKAGES
+
+# the system plugin dir needs sudo, the user one doesn't
+SUDO=""
+
+if [ ! -w "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
+  SUDO="sudo"
+fi
+
+$SUDO mkdir -p "$PLUGIN_DIR"
+
+for plugin in $PLUGINS; do
+  echo "installing $plugin to $PLUGIN_DIR"
+  $SUDO cp "target/release/$plugin" "$PLUGIN_DIR/"
+done
+
+for element in rtpav1pay rtpav1depay; do
+  GST_PLUGIN_PATH="$PLUGIN_DIR${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}" gst-inspect-1.0 $element > /dev/null && echo "$element installed"
+done
