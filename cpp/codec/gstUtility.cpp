@@ -707,6 +707,11 @@ static bool gst_query_hw_encoder()
 // gst_select_encoder
 const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecType& type )
 {
+	// remap nvenc before the platform checks, so it gets the same hardware checks as v4l2
+	// (otherwise it picked the V4L2 hardware encoders on Orin Nano, which doesn't have NVENC)
+	if( type == videoOptions::CODEC_NVENC || type == videoOptions::CODEC_NVDEC )
+		type = gst_default_codec();  // TODO NVENC/NVDEC support
+
 #if defined(__aarch64__)
 #if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
 	if( type == videoOptions::CODEC_OMX )
@@ -730,9 +735,6 @@ const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecTy
 		type = gst_default_codec();
 #endif
 
-	if( type == videoOptions::CODEC_NVENC || type == videoOptions::CODEC_NVDEC )
-		type = gst_default_codec();  // TODO NVENC/NVDEC support
-	
 	if( codec == videoOptions::CODEC_RAW )
 		type = videoOptions::CODEC_CPU;
 
